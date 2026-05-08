@@ -9,7 +9,7 @@ import type { NodeContext } from "../nodeContext";
 import { assertCommitteeMultisigAddress, buildMultiSigPublicKey } from "../multisig.js";
 import { loadPubkeysByAddrB64 } from "../services/pubkeys";
 import { readRegisteredOracleNodeByAddr } from "../services/schedulerReader";
-import { loadTaskBundle, isTaskFreshForNode, taskCreatedAtMs } from "../services/taskObjects";
+import { loadLatestTaskResult, loadTaskBundle, isTaskFreshForNode, taskCreatedAtMs } from "../services/taskObjects";
 import { savePersistedAcceptedTemplateIds } from "../templateState";
 import { moveToArray, moveToString } from "../utils/move";
 import {
@@ -168,6 +168,19 @@ function meanFloor(values: number[]): number {
 function varianceSpread(values: number[]): number {
   if (!values.length) return 0;
   return Math.max(...values) - Math.min(...values);
+}
+
+async function tryLoadPreviousStorageResult(
+  ctx: NodeContext,
+  taskId: string,
+  bundle: Awaited<ReturnType<typeof loadTaskBundle>>,
+): Promise<string | null> {
+  try {
+    return (await loadLatestTaskResult(ctx.client, bundle))?.result ?? null;
+  } catch (e: any) {
+    console.warn(`[node ${ctx.nodeId}] previous STORAGE result unavailable task=${taskId}: ${String(e?.message ?? e)}`);
+    return null;
+  }
 }
 
 export async function runConsensusRound(
@@ -610,6 +623,10 @@ export async function processAssigned(
   let normalized = "";
   const executionStartedAt = Date.now();
   try {
+    const previousResult =
+      taskType === "STORAGE" && Number(taskFields.latest_result_seq ?? 0) > 0
+        ? await tryLoadPreviousStorageResult(ctx, taskId, bundle)
+        : null;
     normalized = await executeTask({
       taskType,
       payload: payloadJson,
@@ -619,6 +636,7 @@ export async function processAssigned(
       declaredDownloadBytes: Number(configFields.declared_download_bytes ?? 0) || undefined,
       retentionDays,
       taskCreatedAtMs: Number(runtimeFields.created_at_ms ?? 0) || taskCreatedAtMs(bundle),
+      previousResult,
     });
     console.log(`\n[node ${nodeId}] normalized output (first 2000 chars):\n${normalized.slice(0, 2000)}\n`);
   } catch (e: any) {

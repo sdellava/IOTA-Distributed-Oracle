@@ -150,6 +150,33 @@ export async function uploadBytesToIpfs(args: {
   };
 }
 
+export async function pinCidToIpfs(args: {
+  cid: string;
+}): Promise<{ cid: string; pinned: boolean }> {
+  const cfg = getIpfsConfig();
+  if (!cfg.enabled) throw new Error("IPFS is disabled");
+
+  const cid = String(args.cid ?? "").trim();
+  if (!cid) throw new Error("Missing IPFS cid");
+
+  const url = new URL(`${cfg.apiUrl.replace(/\/$/, "")}/api/v0/pin/add`);
+  url.searchParams.set("arg", cid);
+  url.searchParams.set("recursive", "true");
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: buildHeaders(cfg),
+  });
+
+  const bodyText = await res.text();
+
+  if (!res.ok) {
+    throw new Error(`IPFS pin/add failed: HTTP ${res.status} ${res.statusText} - ${bodyText.slice(0, 400)}`);
+  }
+
+  return { cid, pinned: true };
+}
+
 
 export async function deleteCidFromIpfs(args: {
   cid: string;

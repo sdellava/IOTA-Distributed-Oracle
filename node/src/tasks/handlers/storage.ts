@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { Agent } from "undici";
 
-import { uploadBytesToIpfs, getIpfsConfig } from "../../ipfs";
+import { uploadBytesToIpfs, getIpfsConfig, pinCidToIpfs } from "../../ipfs";
 import type { TaskHandler } from "../types";
 import { normalizeJsonCanonical } from "../utils/json";
 
@@ -71,6 +71,30 @@ function ensureAllowedUrl(url: string): string {
   const trimmed = String(url ?? "").trim();
   if (!/^https?:\/\//i.test(trimmed)) throw new Error(`Invalid STORAGE source.url: ${trimmed}`);
   return trimmed;
+}
+
+async function reusablePreviousStorageResult(previousResult?: string | null): Promise<string | null> {
+  if (!previousResult) return null;
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(previousResult);
+  } catch {
+    return null;
+  }
+
+  if (parsed?.schema !== "storage-result-v2" || parsed?.task_type !== "STORAGE") return null;
+  if (typeof parsed?.ipfs_cid !== "string" || !parsed.ipfs_cid.trim()) return null;
+  if (parsed?.persisted !== true || parsed?.ipfs_enabled !== true) return null;
+
+  try {
+    await pinCidToIpfs({ cid: parsed.ipfs_cid });
+  } catch (e: any) {
+    console.warn(`STORAGE previous CID pin failed, falling back to source.url download: ${String(e?.message ?? e)}`);
+    return null;
+  }
+
+  return normalizeJsonCanonical(parsed, { canonical: true, dropNulls: false, sortArrays: false });
 }
 
 function normalizeHeaders(input: unknown): Record<string, string> {
@@ -331,7 +355,11 @@ export const handleStorage: TaskHandler = async ({
   payload,
   taskId,
   retentionDays: ctxRetentionDays,
+  previousResult,
 }) => {
+  const reused = await reusablePreviousStorageResult(previousResult);
+  if (reused) return reused;
+
   const content = await resolvePayloadContent(payload ?? {});
   const actualBytes = content.bytes.length;
   const effectiveRetentionDays = Math.max(0, Number(ctxRetentionDays ?? content.retentionDays ?? 0) || 0);

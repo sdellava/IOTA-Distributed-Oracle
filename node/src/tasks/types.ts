@@ -10,6 +10,7 @@ export type TaskHandlerContext = {
   declaredDownloadBytes?: number;
   retentionDays?: number;
   taskCreatedAtMs?: number;
+  previousResult?: string | null;
 };
 
 export type TaskHandler = (ctx: TaskHandlerContext) => Promise<string>;

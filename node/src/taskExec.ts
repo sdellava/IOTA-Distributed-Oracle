@@ -12,6 +12,7 @@ export async function executeTask(opts: {
   declaredDownloadBytes?: number;
   retentionDays?: number;
   taskCreatedAtMs?: number;
+  previousResult?: string | null;
 }): Promise<string> {
   return runTask(opts.taskType, opts.payload, {
     taskId: opts.taskId,
@@ -20,5 +21,6 @@ export async function executeTask(opts: {
     declaredDownloadBytes: opts.declaredDownloadBytes,
     retentionDays: opts.retentionDays,
     taskCreatedAtMs: opts.taskCreatedAtMs,
+    previousResult: opts.previousResult,
   });
 }

@@ -226,6 +226,7 @@ export function validateTaskMultisig(
       : signerIds;
 
   const committeeSourceIds = committeeIds.length > 0 ? committeeIds : orderedSignerIds;
+  const hasCommitteeSource = committeeSourceIds.length > 0;
 
   const committeeRows = committeeSourceIds.map((memberId: string) => {
     const memberIdLc = memberId.toLowerCase();
@@ -268,6 +269,8 @@ export function validateTaskMultisig(
   try {
     if (!Number.isFinite(threshold) || threshold <= 0) {
       derivedError = `Invalid quorum_k on task: ${String(thresholdRaw)}`;
+    } else if (!hasCommitteeSource) {
+      derivedError = null;
     } else if (validCommitteePubkeys.length < threshold) {
       derivedError = `Not enough assigned node pubkeys to derive multisig. threshold=${threshold}, found=${validCommitteePubkeys.length}`;
     } else {
