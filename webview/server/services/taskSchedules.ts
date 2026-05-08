@@ -5,6 +5,19 @@ import { IotaClient } from "@iota/iota-sdk/client";
 import { getRuntimeConfig, type OracleNetwork } from "../config.js";
 import type { TaskScheduleItem, TaskSchedulesResponse } from "../types.js";
 
+type GraphqlTaskObjectsResponse = {
+  data?: {
+    objects?: {
+      nodes?: { address?: string | null }[];
+      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+    };
+  };
+  errors?: { message?: string }[];
+};
+
+const TASK_OBJECT_DISCOVERY_PAGE_SIZE = 50;
+const TASK_OBJECT_DISCOVERY_MAX = 1000;
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
@@ -38,6 +51,12 @@ function toText(value: any): string {
     }
   }
   return "";
+}
+
+function normalizeAddress(value: unknown): string {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return "";
+  return text.startsWith("0x") ? text : `0x${text}`;
 }
 
 function statusLabel(status: number): string {
@@ -90,11 +109,97 @@ async function readTaskSchedule(client: IotaClient, id: string): Promise<TaskSch
   };
 }
 
+function getGraphqlEndpoint(network: string | undefined): string | null {
+  const normalized = String(network ?? "").trim().toLowerCase();
+  if (normalized === "mainnet") return "https://graphql.mainnet.iota.cafe";
+  if (normalized === "testnet") return "https://graphql.testnet.iota.cafe";
+  if (normalized === "devnet") return "https://graphql.devnet.iota.cafe";
+  return null;
+}
+
+async function fetchGraphqlPayload<T>(
+  graphqlUrl: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
+  const response = await fetch(graphqlUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`GraphQL request failed: HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+async function listTaskObjectIds(
+  network: string | undefined,
+  packageId: string | null,
+  warnings: string[],
+): Promise<string[]> {
+  if (!packageId) return [];
+
+  const graphqlUrl = getGraphqlEndpoint(network);
+  if (!graphqlUrl) return [];
+
+  const structType = `${packageId}::oracle_tasks::Task`;
+  const query = `
+    query ListTaskObjects($type: String!, $after: String) {
+      objects(first: ${TASK_OBJECT_DISCOVERY_PAGE_SIZE}, after: $after, filter: { type: $type }) {
+        nodes {
+          address
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  `;
+
+  const ids: string[] = [];
+  let cursor: string | null = null;
+
+  try {
+    for (;;) {
+      const payload: GraphqlTaskObjectsResponse = await fetchGraphqlPayload<GraphqlTaskObjectsResponse>(graphqlUrl, query, {
+        type: structType,
+        after: cursor,
+      });
+      if (payload.errors?.length) {
+        throw new Error(payload.errors.map((item: { message?: string }) => item.message || "Unknown GraphQL error").join("; "));
+      }
+
+      for (const node of payload.data?.objects?.nodes ?? []) {
+        const id = normalizeAddress(node.address);
+        if (id) ids.push(id);
+      }
+
+      const pageInfo: { hasNextPage?: boolean; endCursor?: string | null } | undefined =
+        payload.data?.objects?.pageInfo;
+      if (!pageInfo?.hasNextPage) break;
+      cursor = pageInfo.endCursor ?? null;
+      if (!cursor || ids.length >= TASK_OBJECT_DISCOVERY_MAX) break;
+    }
+  } catch (e: any) {
+    warnings.push(`Failed to discover non-live task schedules: ${String(e?.message ?? e)}`);
+  }
+
+  return ids;
+}
+
 export async function getTaskSchedules(network?: string): Promise<TaskSchedulesResponse> {
   const runtime = getRuntimeConfig(network as OracleNetwork | undefined);
   const warnings: string[] = [];
   const registryId = runtime.oracleTaskRegistryId || null;
   const schedulerQueueId = runtime.oracleTaskSchedulerQueueId || null;
+  const tasksPackageId = runtime.oracleTasksPackageId || null;
 
   if (!registryId) warnings.push("Missing ORACLE_TASK_REGISTRY_ID for active network.");
   if (!schedulerQueueId) warnings.push("Missing ORACLE_TASK_SCHEDULER_QUEUE_ID for active network.");
@@ -123,21 +228,29 @@ export async function getTaskSchedules(network?: string): Promise<TaskSchedulesR
   }
 
   const items: TaskScheduleItem[] = [];
+  const taskIds = new Set<string>();
   if (registryId) {
     try {
       const registryObj = await client.getObject({ id: registryId, options: { showContent: true } } as any);
       const fields = getMoveFields(registryObj);
-      const ids = toArray(fields.live_task_ids).map(toText).filter(Boolean);
-      for (const id of ids) {
-        try {
-          const item = await readTaskSchedule(client, id);
-          if (item) items.push(item);
-        } catch (e: any) {
-          warnings.push(`Failed to read task schedule ${id}: ${String(e?.message ?? e)}`);
-        }
+      for (const id of toArray(fields.live_task_ids).map(toText).filter(Boolean)) {
+        taskIds.add(normalizeAddress(id));
       }
     } catch (e: any) {
       warnings.push(`Failed to read task registry: ${String(e?.message ?? e)}`);
+    }
+  }
+
+  for (const id of await listTaskObjectIds(runtime.network, tasksPackageId, warnings)) {
+    taskIds.add(normalizeAddress(id));
+  }
+
+  for (const id of taskIds) {
+    try {
+      const item = await readTaskSchedule(client, id);
+      if (item) items.push(item);
+    } catch (e: any) {
+      warnings.push(`Failed to read task schedule ${id}: ${String(e?.message ?? e)}`);
     }
   }
 
