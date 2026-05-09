@@ -2,10 +2,10 @@
 name = "iota_oracle_tasks"
 version = "0.0.1"
 edition = "2024.beta"
-published-at = "0xc8b7fca122f19b4cee989c2c9a17a2d288e1b90106882ed672c83b32976c4e89"
+published-at = "0x5187b9f144e2ecd90e42276d00480015648c16d6eb7c4a8083895a4801b22a87"
 
 [dependencies]
 iota_oracle_system_state = { local = "../oracle_system_state_devnet" }
 
 [addresses]
-iota_oracle_tasks = "0xc8b7fca122f19b4cee989c2c9a17a2d288e1b90106882ed672c83b32976c4e89"
+iota_oracle_tasks = "0x5187b9f144e2ecd90e42276d00480015648c16d6eb7c4a8083895a4801b22a87"

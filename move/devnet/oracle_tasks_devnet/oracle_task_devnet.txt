@@ -18,10 +18,38 @@ BUILDING iota_oracle_tasks
    [0m[34m│[0m
    [0m[34m=[0m This warning can be suppressed with '#[allow(unused_const)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
 
-[0m[1m[38;5;11mwarning[W09004][0m[1m: unnecessary trailing semicolon[0m
-    [0m[34m┌─[0m /mnt/c/Users/sdellava/OpenCloud/Personale/Desktop SDVC/Documenti/Development/ObjectID/IOTA Distributed Oracole/move/devnet/oracle_tasks_devnet/sources/oracle_tasks.move:756:19
+[0m[1m[38;5;11mwarning[Lint W99001][0m[1m: non-composable transfer to sender[0m
+    [0m[34m┌─[0m /mnt/c/Users/sdellava/OpenCloud/Personale/Desktop SDVC/Documenti/Development/ObjectID/IOTA Distributed Oracole/move/devnet/oracle_tasks_devnet/sources/oracle_tasks.move:494:9
     [0m[34m│[0m
-[0m[34m756[0m [0m[34m│[0m             return[0m[33m;[0m
+[0m[34m424[0m [0m[34m│[0m     ): object::ID {
+    [0m[34m│[0m        [0m[34m----------[0m [0m[34mReturning an object from a function, allows a caller to use the object and enables composability via programmable transactions.[0m
+    [0m[34m·[0m
+[0m[34m452[0m [0m[34m│[0m         let creator = tx_context::sender(ctx);
+    [0m[34m│[0m                       [0m[34m-----------------------[0m [0m[34mTransaction sender address coming from here[0m
+    [0m[34m·[0m
+[0m[34m494[0m [0m[34m│[0m         [0m[33mtransfer::public_transfer(TaskOwnerCap { id: object::new(ctx), task_id }, creator)[0m;
+    [0m[34m│[0m         [0m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [0m[33mTransfer of an object to transaction sender address[0m
+    [0m[34m│[0m
+    [0m[34m=[0m This warning can be suppressed with '#[allow(lint(self_transfer))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[Lint W99001][0m[1m: non-composable transfer to sender[0m
+    [0m[34m┌─[0m /mnt/c/Users/sdellava/OpenCloud/Personale/Desktop SDVC/Documenti/Development/ObjectID/IOTA Distributed Oracole/move/devnet/oracle_tasks_devnet/sources/oracle_tasks.move:496:13
+    [0m[34m│[0m
+[0m[34m424[0m [0m[34m│[0m     ): object::ID {
+    [0m[34m│[0m        [0m[34m----------[0m [0m[34mReturning an object from a function, allows a caller to use the object and enables composability via programmable transactions.[0m
+    [0m[34m·[0m
+[0m[34m452[0m [0m[34m│[0m         let creator = tx_context::sender(ctx);
+    [0m[34m│[0m                       [0m[34m-----------------------[0m [0m[34mTransaction sender address coming from here[0m
+    [0m[34m·[0m
+[0m[34m496[0m [0m[34m│[0m             [0m[33mtransfer::public_transfer(TaskControllerCap { id: object::new(ctx), task_id }, creator)[0m;
+    [0m[34m│[0m             [0m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [0m[33mTransfer of an object to transaction sender address[0m
+    [0m[34m│[0m
+    [0m[34m=[0m This warning can be suppressed with '#[allow(lint(self_transfer))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[W09004][0m[1m: unnecessary trailing semicolon[0m
+    [0m[34m┌─[0m /mnt/c/Users/sdellava/OpenCloud/Personale/Desktop SDVC/Documenti/Development/ObjectID/IOTA Distributed Oracole/move/devnet/oracle_tasks_devnet/sources/oracle_tasks.move:798:19
+    [0m[34m│[0m
+[0m[34m798[0m [0m[34m│[0m             return[0m[33m;[0m
     [0m[34m│[0m             [0m[34m------[0m[33m^[0m
     [0m[34m│[0m             [0m[34m│[0m     [0m[33m│[0m
     [0m[34m│[0m             [0m[34m│[0m     [0m[33mInvalid trailing ';'[0m
@@ -30,21 +58,23 @@ BUILDING iota_oracle_tasks
     [0m[34m│[0m
     [0m[34m=[0m This warning can be suppressed with '#[allow(unused_trailing_semi)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
 
+Please report feedback on the linter warnings at https://github.com/iotaledger/iota/issues
+
 Total number of linter warnings suppressed: 3 (unique lints: 1)
 Skipping dependency verification
-Transaction Digest: 9GnmEtNyCRUmSLfqhf6TUMpkqforot9n5DYnTTgfgLWJ
+Transaction Digest: DBmjiM7GoHpRP7gs78mz5DXqJBeKBHTZEKuK4ccAB2o
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Transaction Data                                                                                             │
 ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ Sender: 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43                                   │
 │ Gas Owner: 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43                                │
-│ Gas Budget: 224020000 NANOS                                                                                  │
+│ Gas Budget: 224559600 NANOS                                                                                  │
 │ Gas Price: 1000 NANOS                                                                                        │
 │ Gas Payment:                                                                                                 │
 │  ┌──                                                                                                         │
 │  │ ID: 0x18b62b8d3ef344e65b9ec0766bd2083e0d3eb09bac1df4600ec29a453481f1a1                                    │
-│  │ Version: 87056225                                                                                         │
-│  │ Digest: 3CcTKX7TYr2ZB6gcccDgFDSWuRY142fk7bS1UGbAe2Sz                                                      │
+│  │ Version: 113585210                                                                                        │
+│  │ Digest: AwcgzczvtXG8ye8KmzTUVRx2KHcZHMwqU9J6vy14A41U                                                      │
 │  └──                                                                                                         │
 │                                                                                                              │
 │ Transaction Kind: Programmable                                                                               │
@@ -62,7 +92,7 @@ Transaction Digest: 9GnmEtNyCRUmSLfqhf6TUMpkqforot9n5DYnTTgfgLWJ
 │ │  │   0x0000000000000000000000000000000000000000000000000000000000000002 │                                  │
 │ │  │   0x0000000000000000000000000000000000000000000000000000000000000003 │                                  │
 │ │  │   0x0000000000000000000000000000000000000000000000000000000000000001 │                                  │
-│ │  │   0x427fa5c3d2ff7c06cfbf92c5c5fc2a1fdfa9762bc6e80ede39e06ebea1054443 │                                  │
+│ │  │   0x86f4f7c1bd5852a9765432709ea0dea59a76c7c1d8706d13b2240144f4b7ddec │                                  │
 │ │  └                                                                      │                                  │
 │ │                                                                         │                                  │
 │ │ 1  TransferObjects:                                                     │                                  │
@@ -74,57 +104,57 @@ Transaction Digest: 9GnmEtNyCRUmSLfqhf6TUMpkqforot9n5DYnTTgfgLWJ
 │ ╰─────────────────────────────────────────────────────────────────────────╯                                  │
 │                                                                                                              │
 │ Signatures:                                                                                                  │
-│    sGV7rnKrJGRdaEoyPsBlmdbHFDgLOpkgZg5CfW7WFtB/tmByHVoWaQt2Gs1DU4CaPinPinJLWO9vWcWU0dOMAA==                  │
+│    dZl7+v0c+rsaE0v3NLnQpf7Upm3vSelBHm7OXc+A8+6IJ7zJNLD5AgcyOMjk6/aZQu4H2WdUVCrgiNUU5KeUCA==                  │
 │                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭───────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Transaction Effects                                                                               │
 ├───────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Digest: 9GnmEtNyCRUmSLfqhf6TUMpkqforot9n5DYnTTgfgLWJ                                              │
+│ Digest: DBmjiM7GoHpRP7gs78mz5DXqJBeKBHTZEKuK4ccAB2o                                               │
 │ Status: Success                                                                                   │
 │ Executed Epoch: 67                                                                                │
 │                                                                                                   │
 │ Created Objects:                                                                                  │
 │  ┌──                                                                                              │
-│  │ ID: 0x066755baf3619da88c291a11a7ba5fbcffc6872f70ed028161dd469c4e79f673                         │
-│  │ Owner: Account Address ( 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43 )  │
-│  │ Version: 87056226                                                                              │
-│  │ Digest: 9hrBPZQ3AKbedBwXj2abN4qDE9M6b3yq4pw2hZdfETEi                                           │
+│  │ ID: 0x2cd20e6c3b3d7bfc2ea96cdbe8296e581c90042196b23a76ffdfad0dd09cc355                         │
+│  │ Owner: Shared( 113585211 )                                                                     │
+│  │ Version: 113585211                                                                             │
+│  │ Digest: 2d8RHjK8PnocnhxY6Hq3iWJHP93TB4VWaNiWGruaNx6E                                           │
 │  └──                                                                                              │
 │  ┌──                                                                                              │
-│  │ ID: 0x8bbfaeb6776a185952dbc0071cd72d884792d40c78a27342915fcc48d90cf96c                         │
-│  │ Owner: Shared( 87056226 )                                                                      │
-│  │ Version: 87056226                                                                              │
-│  │ Digest: DN5LZxm2nRv8eaTo5TjS9rsQJy4stxzbaPb7MZnVu7GG                                           │
-│  └──                                                                                              │
-│  ┌──                                                                                              │
-│  │ ID: 0xc8b7fca122f19b4cee989c2c9a17a2d288e1b90106882ed672c83b32976c4e89                         │
+│  │ ID: 0x5187b9f144e2ecd90e42276d00480015648c16d6eb7c4a8083895a4801b22a87                         │
 │  │ Owner: Immutable                                                                               │
 │  │ Version: 1                                                                                     │
-│  │ Digest: C1ERh6yQZnMqMZy6NFR2Kiipi8eEVf7cBYE9vHE58d6z                                           │
+│  │ Digest: Eu51KhHcTsrje7nkxThRDzWCdxdCvTuGUto7MMBwroNT                                           │
 │  └──                                                                                              │
 │  ┌──                                                                                              │
-│  │ ID: 0xec6cbf58046f7aa1ebae57e4708d5feff83ea3bb276393eca7c56d21eb0b9bdf                         │
-│  │ Owner: Shared( 87056226 )                                                                      │
-│  │ Version: 87056226                                                                              │
-│  │ Digest: 2ntZqgdeKn1ohwBF7BkVCeasd8uiVV7PFXmqfxxWXpgB                                           │
+│  │ ID: 0x823c6122dfee73b75148f70b21af53a211ca22f7cef448957edd3e7a84a9aaf4                         │
+│  │ Owner: Account Address ( 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43 )  │
+│  │ Version: 113585211                                                                             │
+│  │ Digest: EoeVmgYi9f8CecpEYXBYNrziBrrTfvjLfhsieWkXS6xr                                           │
+│  └──                                                                                              │
+│  ┌──                                                                                              │
+│  │ ID: 0xc1aec8fa3a4de5a46c5cfe279f669ba539ef8f6eba3fa1e16ee1819d2b43b43c                         │
+│  │ Owner: Shared( 113585211 )                                                                     │
+│  │ Version: 113585211                                                                             │
+│  │ Digest: 2BSDo7o9zTGT8HNjFcwkULn3GHrtVcPabuAdtuDj2gyu                                           │
 │  └──                                                                                              │
 │ Mutated Objects:                                                                                  │
 │  ┌──                                                                                              │
 │  │ ID: 0x18b62b8d3ef344e65b9ec0766bd2083e0d3eb09bac1df4600ec29a453481f1a1                         │
 │  │ Owner: Account Address ( 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43 )  │
-│  │ Version: 87056226                                                                              │
-│  │ Digest: 2wgjCyodQxmgj8fp7LUDvHhHuSfDyKUKBzHszJMCUwYq                                           │
+│  │ Version: 113585211                                                                             │
+│  │ Digest: 3fHzXb9ntYZWu4NJEFtiyQGFqpK3BWuS1kJVj5xeGznE                                           │
 │  └──                                                                                              │
 │ Gas Object:                                                                                       │
 │  ┌──                                                                                              │
 │  │ ID: 0x18b62b8d3ef344e65b9ec0766bd2083e0d3eb09bac1df4600ec29a453481f1a1                         │
 │  │ Owner: Account Address ( 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43 )  │
-│  │ Version: 87056226                                                                              │
-│  │ Digest: 2wgjCyodQxmgj8fp7LUDvHhHuSfDyKUKBzHszJMCUwYq                                           │
+│  │ Version: 113585211                                                                             │
+│  │ Digest: 3fHzXb9ntYZWu4NJEFtiyQGFqpK3BWuS1kJVj5xeGznE                                           │
 │  └──                                                                                              │
 │ Gas Cost Summary:                                                                                 │
-│    Storage Cost: 220020000 NANOS                                                                  │
+│    Storage Cost: 220559600 NANOS                                                                  │
 │    Computation Cost: 3000000 NANOS                                                                │
 │    Computation Cost Burned: 3000000 NANOS                                                         │
 │    Storage Rebate: 980400 NANOS                                                                   │
@@ -132,8 +162,8 @@ Transaction Digest: 9GnmEtNyCRUmSLfqhf6TUMpkqforot9n5DYnTTgfgLWJ
 │                                                                                                   │
 │ Transaction Dependencies:                                                                         │
 │    5repTPUpUdauUTHh4AkSL1AapNVytMi5kuyxbvLb2VTr                                                   │
+│    6wa2z8tLKZwxs6QZWTHcBcadMWFGFBPrLCr51NqQxkUZ                                                   │
 │    75v7Q5wbid76NR8DvNxYEPuBM9P3hfmMJpM37HCVHw7T                                                   │
-│    DYeAYzR3HTQB42dNKWmavk1cx2abm6vyKKfpZPFNoua6                                                   │
 │    Fyc9n6LPgwzK7zAyoNifAs7ZaeBVLpYqm2XS3jatK2jU                                                   │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─────────────────────────────╮
@@ -145,28 +175,28 @@ Transaction Digest: 9GnmEtNyCRUmSLfqhf6TUMpkqforot9n5DYnTTgfgLWJ
 ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ Created Objects:                                                                                                               │
 │  ┌──                                                                                                                           │
-│  │ ObjectID: 0x066755baf3619da88c291a11a7ba5fbcffc6872f70ed028161dd469c4e79f673                                                │
+│  │ ObjectID: 0x2cd20e6c3b3d7bfc2ea96cdbe8296e581c90042196b23a76ffdfad0dd09cc355                                                │
+│  │ Sender: 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43                                                  │
+│  │ Owner: Shared( 113585211 )                                                                                                  │
+│  │ ObjectType: 0x5187b9f144e2ecd90e42276d00480015648c16d6eb7c4a8083895a4801b22a87::oracle_tasks::SchedulerQueue                │
+│  │ Version: 113585211                                                                                                          │
+│  │ Digest: 2d8RHjK8PnocnhxY6Hq3iWJHP93TB4VWaNiWGruaNx6E                                                                        │
+│  └──                                                                                                                           │
+│  ┌──                                                                                                                           │
+│  │ ObjectID: 0x823c6122dfee73b75148f70b21af53a211ca22f7cef448957edd3e7a84a9aaf4                                                │
 │  │ Sender: 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43                                                  │
 │  │ Owner: Account Address ( 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43 )                               │
 │  │ ObjectType: 0x2::package::UpgradeCap                                                                                        │
-│  │ Version: 87056226                                                                                                           │
-│  │ Digest: 9hrBPZQ3AKbedBwXj2abN4qDE9M6b3yq4pw2hZdfETEi                                                                        │
+│  │ Version: 113585211                                                                                                          │
+│  │ Digest: EoeVmgYi9f8CecpEYXBYNrziBrrTfvjLfhsieWkXS6xr                                                                        │
 │  └──                                                                                                                           │
 │  ┌──                                                                                                                           │
-│  │ ObjectID: 0x8bbfaeb6776a185952dbc0071cd72d884792d40c78a27342915fcc48d90cf96c                                                │
+│  │ ObjectID: 0xc1aec8fa3a4de5a46c5cfe279f669ba539ef8f6eba3fa1e16ee1819d2b43b43c                                                │
 │  │ Sender: 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43                                                  │
-│  │ Owner: Shared( 87056226 )                                                                                                   │
-│  │ ObjectType: 0xc8b7fca122f19b4cee989c2c9a17a2d288e1b90106882ed672c83b32976c4e89::oracle_tasks::TaskRegistry                  │
-│  │ Version: 87056226                                                                                                           │
-│  │ Digest: DN5LZxm2nRv8eaTo5TjS9rsQJy4stxzbaPb7MZnVu7GG                                                                        │
-│  └──                                                                                                                           │
-│  ┌──                                                                                                                           │
-│  │ ObjectID: 0xec6cbf58046f7aa1ebae57e4708d5feff83ea3bb276393eca7c56d21eb0b9bdf                                                │
-│  │ Sender: 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43                                                  │
-│  │ Owner: Shared( 87056226 )                                                                                                   │
-│  │ ObjectType: 0xc8b7fca122f19b4cee989c2c9a17a2d288e1b90106882ed672c83b32976c4e89::oracle_tasks::SchedulerQueue                │
-│  │ Version: 87056226                                                                                                           │
-│  │ Digest: 2ntZqgdeKn1ohwBF7BkVCeasd8uiVV7PFXmqfxxWXpgB                                                                        │
+│  │ Owner: Shared( 113585211 )                                                                                                  │
+│  │ ObjectType: 0x5187b9f144e2ecd90e42276d00480015648c16d6eb7c4a8083895a4801b22a87::oracle_tasks::TaskRegistry                  │
+│  │ Version: 113585211                                                                                                          │
+│  │ Digest: 2BSDo7o9zTGT8HNjFcwkULn3GHrtVcPabuAdtuDj2gyu                                                                        │
 │  └──                                                                                                                           │
 │ Mutated Objects:                                                                                                               │
 │  ┌──                                                                                                                           │
@@ -174,14 +204,14 @@ Transaction Digest: 9GnmEtNyCRUmSLfqhf6TUMpkqforot9n5DYnTTgfgLWJ
 │  │ Sender: 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43                                                  │
 │  │ Owner: Account Address ( 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43 )                               │
 │  │ ObjectType: 0x2::coin::Coin<0x2::iota::IOTA>                                                                                │
-│  │ Version: 87056226                                                                                                           │
-│  │ Digest: 2wgjCyodQxmgj8fp7LUDvHhHuSfDyKUKBzHszJMCUwYq                                                                        │
+│  │ Version: 113585211                                                                                                          │
+│  │ Digest: 3fHzXb9ntYZWu4NJEFtiyQGFqpK3BWuS1kJVj5xeGznE                                                                        │
 │  └──                                                                                                                           │
 │ Published Objects:                                                                                                             │
 │  ┌──                                                                                                                           │
-│  │ PackageID: 0xc8b7fca122f19b4cee989c2c9a17a2d288e1b90106882ed672c83b32976c4e89                                               │
+│  │ PackageID: 0x5187b9f144e2ecd90e42276d00480015648c16d6eb7c4a8083895a4801b22a87                                               │
 │  │ Version: 1                                                                                                                  │
-│  │ Digest: C1ERh6yQZnMqMZy6NFR2Kiipi8eEVf7cBYE9vHE58d6z                                                                        │
+│  │ Digest: Eu51KhHcTsrje7nkxThRDzWCdxdCvTuGUto7MMBwroNT                                                                        │
 │  │ Modules: oracle_messages, oracle_task_config, oracle_task_consensus, oracle_task_runtime, oracle_tasks, oracle_tasks_legacy │
 │  └──                                                                                                                           │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -191,6 +221,6 @@ Transaction Digest: 9GnmEtNyCRUmSLfqhf6TUMpkqforot9n5DYnTTgfgLWJ
 │  ┌──                                                                                              │
 │  │ Owner: Account Address ( 0x59dadd46e10bc3d890a0d20aa3fd1a460110eab5d368922ac1db02883434cc43 )  │
 │  │ CoinType: 0x2::iota::IOTA                                                                      │
-│  │ Amount: -222039600                                                                             │
+│  │ Amount: -222579200                                                                             │
 │  └──                                                                                              │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯

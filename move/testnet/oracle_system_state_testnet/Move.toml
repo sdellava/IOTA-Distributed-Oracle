@@ -2,7 +2,7 @@
 name = "iota_oracle_system_state"
 version = "0.0.1"
 edition = "2024.beta"
-published-at = "0x0ccf40aaaa7cc933a4f81320ca1c8ae20fff090f190431e7afb9e248ae216e3a"
+published-at = "0x24360e39643f72e1edb197aa37ce37ec667775f9e85f35a01a94d8fb9f6b8357"
 # license = "SPDX-License-Identifier: AGPLv3"
 # authors = [""]
 
@@ -10,4 +10,4 @@ published-at = "0x0ccf40aaaa7cc933a4f81320ca1c8ae20fff090f190431e7afb9e248ae216e
 iota_oracle_validator_caps = { local = "../oracle_validator_caps_testnet" }
 
 [addresses]
-iota_oracle_system_state = "0x0ccf40aaaa7cc933a4f81320ca1c8ae20fff090f190431e7afb9e248ae216e3a"
+iota_oracle_system_state = "0x24360e39643f72e1edb197aa37ce37ec667775f9e85f35a01a94d8fb9f6b8357"

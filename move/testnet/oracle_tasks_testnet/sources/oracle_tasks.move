@@ -403,7 +403,7 @@ module iota_oracle_tasks::oracle_tasks {
         });
     }
 
-    public entry fun create_task(
+    public fun create_task_object(
         registry: &mut TaskRegistry,
         st: &State,
         node_registry: &NodeRegistry,
@@ -421,7 +421,7 @@ module iota_oracle_tasks::oracle_tasks {
         end_schedule_ms: u64,
         interval_ms: u64,
         ctx: &mut TxContext
-    ) {
+    ): object::ID {
         assert!(template_id != 0, EInvalidTaskTemplate);
         assert!(count_scheduler_nodes(node_registry) > 0, ENoSchedulerNodes);
         assert!(vector::length(&payload) > 0, EInvalidPayload);
@@ -507,6 +507,48 @@ module iota_oracle_tasks::oracle_tasks {
             funded_iota,
             has_controller_cap: create_controller_cap,
         });
+
+        task_id
+    }
+
+    public entry fun create_task(
+        registry: &mut TaskRegistry,
+        st: &State,
+        node_registry: &NodeRegistry,
+        initial_funds: Coin<IOTA>,
+        template_id: u64,
+        requested_nodes: u64,
+        quorum_k: u64,
+        payload: vector<u8>,
+        retention_days: u64,
+        declared_download_bytes: u64,
+        mediation_mode: u8,
+        variance_max: u64,
+        create_controller_cap: u8,
+        start_schedule_ms: u64,
+        end_schedule_ms: u64,
+        interval_ms: u64,
+        ctx: &mut TxContext
+    ) {
+        create_task_object(
+            registry,
+            st,
+            node_registry,
+            initial_funds,
+            template_id,
+            requested_nodes,
+            quorum_k,
+            payload,
+            retention_days,
+            declared_download_bytes,
+            mediation_mode,
+            variance_max,
+            create_controller_cap,
+            start_schedule_ms,
+            end_schedule_ms,
+            interval_ms,
+            ctx
+        );
     }
 
     public entry fun top_up_task(
