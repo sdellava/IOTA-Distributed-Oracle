@@ -79,7 +79,7 @@ This non-refundability applies because costs are incurred by the System and part
 
 ## 7. Components of the Execution Cost
 
-[Unchanged - original text remains identical]
+The composition of the costs for each individual task is displayed in the dedicated page of the webview. The User is responsible for reviewing the applicable cost components before submitting or scheduling a task.
 
 ## 8. No Traditional Service Relationship
 
