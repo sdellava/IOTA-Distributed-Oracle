@@ -128,6 +128,20 @@ function toNum(value: unknown): number {
   return toNum(record.value);
 }
 
+function toTemplateId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.floor(value);
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? Math.floor(n) : null;
+  }
+  const record = asRecord(value);
+  if (!record || !("value" in record)) return null;
+  return toTemplateId(record.value);
+}
+
 function toStr(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "bigint") return String(value);
@@ -228,8 +242,8 @@ async function listTemplateDynamicFields(client: any, stateId: string): Promise<
       const valueFields = extractFields(outerFields.value) ?? asRecord(outerFields.value);
       if (!valueFields) continue;
 
-      const templateId = toNum(valueFields.template_id);
-      if (!templateId) continue;
+      const templateId = toTemplateId(valueFields.template_id);
+      if (templateId == null || templateId < 0) continue;
 
       out.push({
         templateId,
@@ -259,11 +273,11 @@ function getPendingProposals(fields: Record<string, unknown>): PendingProposal[]
     const proposalId = toNum(p.proposal_id);
     const kindRaw = toNum(p.proposal_kind);
     const kind = kindRaw === 1 ? "upsert" : kindRaw === 2 ? "remove" : "unknown";
-    const templateId = toNum(p.template_id);
+    const templateId = toTemplateId(p.template_id);
     const approvals = toNum(p.approvals);
     const electorateSize = toNum(p.electorate_size);
     const approvalsNeeded = majorityThreshold(electorateSize);
-    if (proposalId <= 0 || templateId <= 0) continue;
+    if (proposalId <= 0 || templateId == null || templateId < 0) continue;
 
     out.push({
       proposalId,
@@ -284,11 +298,11 @@ function getPendingProposals(fields: Record<string, unknown>): PendingProposal[]
     const proposalId = toNum(fields.template_proposal_id);
     const kindRaw = toNum(fields.template_proposal_kind);
     const kind = kindRaw === 1 ? "upsert" : kindRaw === 2 ? "remove" : "unknown";
-    const templateId = toNum(fields.proposed_template_id);
+    const templateId = toTemplateId(fields.proposed_template_id);
     const approvals = toNum(fields.template_proposal_approvals);
     const electorateSize = toNum(fields.template_proposal_electorate_size);
     const approvalsNeeded = majorityThreshold(electorateSize);
-    if (proposalId > 0 && templateId > 0) {
+    if (proposalId > 0 && templateId != null && templateId >= 0) {
       out.push({
         proposalId,
         kind,

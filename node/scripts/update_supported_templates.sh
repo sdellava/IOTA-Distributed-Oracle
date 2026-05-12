@@ -200,6 +200,7 @@ for (const p of pending) {
   if (!Number.isFinite(id) || id < 0) continue;
   if (!map.has(id)) map.set(id, { id, type: "", src: "pending-upsert" });
 }
+if (!map.has(0)) map.set(0, { id: 0, type: "SCHEDULER", src: "local" });
 for (const x of [...map.values()].sort((a,b)=>a.id-b.id)) {
   process.stdout.write(`${x.id}\t${x.type}\t${x.src}\n`);
 }

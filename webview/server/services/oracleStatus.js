@@ -3,6 +3,7 @@
 import { IotaClient } from "@iota/iota-sdk/client";
 import { config, getRuntimeConfig } from "../config.js";
 const TASK_OBJECT_COUNT_CACHE_TTL_MS = 30_000;
+const EXECUTION_MESSAGE_KINDS = new Set([2, 3, 4, 7]);
 const taskObjectCountCache = new Map();
 const totalOracleEventsCache = new Map();
 function normalizeAddress(value) {
@@ -344,6 +345,19 @@ function normalizeEvent(moduleName, event) {
         parsedJson: event.parsedJson ?? null,
     };
 }
+function eventRecord(event) {
+    return asRecord(event.parsedJson) ?? {};
+}
+function activitySender(event) {
+    const parsed = eventRecord(event);
+    return normalizeAddress(String(parsed.sender ?? event.sender ?? ""));
+}
+function isExecutionMessageEvent(event) {
+    const parsed = eventRecord(event);
+    const taskId = String(parsed.task_id ?? "").trim();
+    const kind = Number(parsed.kind ?? -1);
+    return Boolean(taskId) && EXECUTION_MESSAGE_KINDS.has(kind);
+}
 async function queryModuleEvents(client, packageId, moduleName, eventFetchLimit) {
     if (!packageId)
         return [];
@@ -575,7 +589,7 @@ function toNodeActivity(events, activeThresholdMs, registeredNodes) {
         });
     }
     for (const event of events) {
-        const sender = normalizeAddress(event.sender);
+        const sender = activitySender(event);
         if (!sender)
             continue;
         if (restrictToRegistered && !allowed.has(sender))
@@ -777,8 +791,11 @@ export async function getOracleStatus(network) {
         }
     }
     const combined = [...taskEvents, ...messageEvents].sort((a, b) => Number(b.timestampMs ?? "0") - Number(a.timestampMs ?? "0"));
+    const executionMessages = messageEvents
+        .filter(isExecutionMessageEvent)
+        .sort((a, b) => Number(b.timestampMs ?? "0") - Number(a.timestampMs ?? "0"));
     const effectiveRegisteredNodes = registeredNodeAddresses.length > 0 ? registeredNodeAddresses : [...new Set(config.oracleNodeAddresses.map(normalizeAddress).filter(Boolean))];
-    const nodeActivity = toNodeActivity(combined, activeThresholdMs, effectiveRegisteredNodes.map((address) => ({
+    const nodeActivity = toNodeActivity(executionMessages, activeThresholdMs, effectiveRegisteredNodes.map((address) => ({
         address,
         pubkey: null,
         pubkeyBytes: 0,

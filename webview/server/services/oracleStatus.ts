@@ -77,6 +77,7 @@ type TaskObjectCountCacheEntry = {
 };
 
 const TASK_OBJECT_COUNT_CACHE_TTL_MS = 30_000;
+const EXECUTION_MESSAGE_KINDS = new Set([2, 3, 4, 7]);
 const taskObjectCountCache = new Map<string, TaskObjectCountCacheEntry>();
 const totalOracleEventsCache = new Map<string, TaskObjectCountCacheEntry>();
 
@@ -429,6 +430,22 @@ function normalizeEvent(moduleName: string, event: RpcEvent): OracleEventItem {
   };
 }
 
+function eventRecord(event: OracleEventItem): Record<string, unknown> {
+  return asRecord(event.parsedJson) ?? {};
+}
+
+function activitySender(event: OracleEventItem): string {
+  const parsed = eventRecord(event);
+  return normalizeAddress(String(parsed.sender ?? event.sender ?? ""));
+}
+
+function isExecutionMessageEvent(event: OracleEventItem): boolean {
+  const parsed = eventRecord(event);
+  const taskId = String(parsed.task_id ?? "").trim();
+  const kind = Number(parsed.kind ?? -1);
+  return Boolean(taskId) && EXECUTION_MESSAGE_KINDS.has(kind);
+}
+
 async function queryModuleEvents(
   client: IotaClient,
   packageId: string,
@@ -728,7 +745,7 @@ function toNodeActivity(
   }
 
   for (const event of events) {
-    const sender = normalizeAddress(event.sender);
+    const sender = activitySender(event);
     if (!sender) continue;
     if (restrictToRegistered && !allowed.has(sender)) continue;
 
@@ -950,6 +967,9 @@ export async function getOracleStatus(network?: string): Promise<OracleStatusRes
   }
 
   const combined = [...taskEvents, ...messageEvents].sort((a, b) => Number(b.timestampMs ?? "0") - Number(a.timestampMs ?? "0"));
+  const executionMessages = messageEvents
+    .filter(isExecutionMessageEvent)
+    .sort((a, b) => Number(b.timestampMs ?? "0") - Number(a.timestampMs ?? "0"));
   const configuredNodeAddresses = [...new Set(config.oracleNodeAddresses.map(normalizeAddress).filter(Boolean))];
   const effectiveRegisteredNodes = hasReadableNodeRegistry
     ? registeredNodeAddresses
@@ -957,7 +977,7 @@ export async function getOracleStatus(network?: string): Promise<OracleStatusRes
       ? registeredNodeAddresses
       : configuredNodeAddresses;
   const nodeActivity = toNodeActivity(
-    combined,
+    executionMessages,
     activeThresholdMs,
     effectiveRegisteredNodes.map((address) => ({
       address,
