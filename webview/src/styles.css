@@ -247,6 +247,30 @@ textarea {
   font-weight: 700;
 }
 
+.task-setup-box {
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid var(--theme-card-border, rgba(143, 162, 208, 0.14));
+  border-radius: 12px;
+  background: var(--theme-input-bg, #0f1730);
+}
+
+.task-setup-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.task-setup-title {
+  margin-bottom: 4px;
+}
+
+.task-setup-toggle {
+  min-width: 112px;
+}
+
 .task-toolbar,
 .task-actions {
   display: flex;

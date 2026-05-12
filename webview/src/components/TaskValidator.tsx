@@ -16,6 +16,23 @@ type TaskLike = {
   id?: string | { id?: string };
   task_id?: string;
   creator?: string;
+  template_id?: string | number;
+  task_type?: unknown;
+  payload?: unknown;
+  retention_days?: string | number;
+  declared_download_bytes?: string | number;
+  mediation_mode?: string | number;
+  variance_max?: string | number;
+  requested_nodes?: string | number;
+  create_controller_cap?: string | number;
+  start_schedule_ms?: string | number;
+  end_schedule_ms?: string | number;
+  interval_ms?: string | number;
+  last_run_ms?: string | number;
+  next_run_ms?: string | number;
+  active_round?: string | number;
+  status?: string | number;
+  execution_state?: string | number;
   multisig_addr?: string;
   multisig_bytes?: unknown;
   assigned_nodes?: Array<string | number>;
@@ -231,6 +248,49 @@ function formatProducedAt(value: unknown): string {
   const num = fieldNumber({ value }, "value");
   if (num == null || num <= 0) return "-";
   return new Date(num).toLocaleString();
+}
+
+function formatDurationMs(value: unknown): string {
+  const num = fieldNumber({ value }, "value");
+  if (num == null || num <= 0) return "-";
+  if (num % 60000 === 0) return `${Math.floor(num / 60000)} min`;
+  if (num % 1000 === 0) return `${Math.floor(num / 1000)} sec`;
+  return `${num} ms`;
+}
+
+function scalarText(value: unknown): string {
+  if (value == null || value === "") return "-";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  const record = asRecord(value);
+  if (record && "value" in record) return scalarText(record.value);
+  return JSON.stringify(value);
+}
+
+function taskTypeText(value: unknown): string {
+  const decoded = decodeUtf8(value).trim();
+  return decoded || scalarText(value);
+}
+
+function taskPayloadText(value: unknown): string | null {
+  const parsed = decodeAsciiJson(value);
+  if (parsed != null) return JSON.stringify(parsed, null, 2);
+
+  const decoded = decodeUtf8(value).trim();
+  if (decoded) {
+    try {
+      return JSON.stringify(JSON.parse(decoded), null, 2);
+    } catch {
+      return decoded;
+    }
+  }
+
+  const bytes = toUint8Array(value);
+  if (bytes && bytes.length > 0) return bytesToHex(bytes);
+
+  const record = asRecord(value);
+  return record ? JSON.stringify(record, null, 2) : null;
 }
 
 function isMostlyPrintable(text: string): boolean {
@@ -844,6 +904,7 @@ export default function TaskValidator({ task, registeredNodes, events = [] }: Pr
     [task?.run_history],
   );
   const [selectedResultKey, setSelectedResultKey] = useState("");
+  const [setupOpen, setSetupOpen] = useState(false);
 
   useEffect(() => {
     if (!results.length) {
@@ -887,6 +948,31 @@ export default function TaskValidator({ task, registeredNodes, events = [] }: Pr
       prettyResultText(task?.result) ??
       prettyResultText(task?.result_bytes),
     [selectedResult, task?.result, task?.result_bytes],
+  );
+  const taskPayload = useMemo(() => taskPayloadText(task?.payload), [task?.payload]);
+  const setupRows = useMemo(
+    () => [
+      ["Task id", scalarText(task?.task_id ?? (typeof task?.id === "string" ? task.id : task?.id?.id))],
+      ["Creator", scalarText(task?.creator)],
+      ["Template", scalarText(task?.template_id)],
+      ["Task type", taskTypeText(task?.task_type)],
+      ["Requested nodes", scalarText(task?.requested_nodes)],
+      ["Quorum", scalarText(task?.quorum_k)],
+      ["Retention days", scalarText(task?.retention_days)],
+      ["Declared download bytes", scalarText(task?.declared_download_bytes)],
+      ["Mediation mode", scalarText(task?.mediation_mode)],
+      ["Variance max", scalarText(task?.variance_max)],
+      ["Controller cap requested", scalarText(task?.create_controller_cap)],
+      ["Schedule start", formatProducedAt(task?.start_schedule_ms)],
+      ["Schedule end", formatProducedAt(task?.end_schedule_ms)],
+      ["Interval", formatDurationMs(task?.interval_ms)],
+      ["Last run", formatProducedAt(task?.last_run_ms)],
+      ["Next run", formatProducedAt(task?.next_run_ms)],
+      ["Status", scalarText(task?.status)],
+      ["Execution state", scalarText(task?.execution_state)],
+      ["Active round", scalarText(task?.active_round)],
+    ],
+    [task],
   );
 
   const signerOutputPreviewByAddress = useMemo(() => {
@@ -948,6 +1034,51 @@ export default function TaskValidator({ task, registeredNodes, events = [] }: Pr
   return (
     <section className="card">
       <div className="section-title">Validate task</div>
+
+      {task ? (
+        <div className="task-setup-box">
+          <div className="task-setup-header">
+            <div>
+              <div className="subsection-title task-setup-title">Task setup</div>
+              <div className="summary-hint">User parameters stored on-chain for this task.</div>
+            </div>
+            <button
+              type="button"
+              className="validate-task-button task-setup-toggle"
+              onClick={() => setSetupOpen((open) => !open)}
+              aria-expanded={setupOpen}
+            >
+              {setupOpen ? "Hide setup" : "Show setup"}
+            </button>
+          </div>
+
+          {setupOpen ? (
+            <>
+              <div className="table-wrap">
+                <table className="responsive-table">
+                  <tbody>
+                    {setupRows.map(([label, value]) => (
+                      <tr key={label}>
+                        <td>{label}</td>
+                        <td className={String(value).startsWith("0x") ? "mono" : undefined}>{value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="subsection-title" style={{ marginTop: 18 }}>
+                User payload
+              </div>
+              {taskPayload ? <pre>{taskPayload}</pre> : <div className="empty">No payload stored for this task</div>}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="subsection-title" style={{ marginTop: task ? 18 : 0 }}>
+        Validation
+      </div>
 
       <div className="table-wrap">
         <table className="responsive-table">
