@@ -6,6 +6,7 @@ import { assertCommitteeMultisigAddress, buildMultiSigPublicKey } from "../multi
 import {
   advanceSchedulerQueueTx,
   completeSchedulerRoundTx,
+  pruneOracleNodesByValidatorCommitteeTx,
   reconcileSchedulerQueueTx,
   startSchedulerRoundTx,
   submitTaskRunTx,
@@ -159,6 +160,14 @@ export async function processSchedulerRound(ctx: NodeContext): Promise<void> {
   const nowMs = Date.now();
   let processed = 0;
   processed += await abortStaleOpenRuns(ctx, nowMs);
+
+  try {
+    const digest = await pruneOracleNodesByValidatorCommitteeTx(ctx);
+    console.log(`[scheduler ${ctx.nodeId}] prune non-committee delegated nodes tx=${digest}`);
+  } catch (e: any) {
+    console.warn(`[scheduler ${ctx.nodeId}] prune non-committee delegated nodes failed: ${String(e?.message ?? e)}`);
+    return;
+  }
 
   const currentNode = await readRegisteredOracleNodeByAddr(ctx.client, ctx.myAddr);
   if (!currentNode) {
