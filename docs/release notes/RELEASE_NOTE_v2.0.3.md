@@ -6,11 +6,15 @@ Version `v2.0.3` refines scheduler task `0`, which is the on-chain scheduler rol
 
 The release focuses on reducing unnecessary scheduler transactions and keeping the oracle node registry aligned with the IOTA validator committee.
 
+The current `main` branch includes an additional follow-up refinement: before submitting the validator-committee prune transaction, the node checks whether the oracle `NodeRegistry` has already been pruned for the current IOTA epoch.
+
 ## Scheduler task 0 behavior
 
 At each scheduler tick, every node may inspect the queue so that it can detect whether it is its turn or whether it is eligible to take over from a timed-out head node.
 
-The validator-committee prune is now executed only by the node that owns the scheduler turn. A node that is not the current queue head does not call the prune transaction unless it first becomes the head through the normal takeover path.
+The validator-committee prune can be executed only by the node that owns the scheduler turn. A node that is not the current queue head does not call the prune transaction unless it first becomes the head through the normal takeover path.
+
+On current `main`, before submitting the prune transaction, the node compares the current IOTA epoch with `last_committee_prune_epoch` stored in the oracle `NodeRegistry`. If the registry was already pruned in the current epoch, the node skips the prune transaction entirely.
 
 When a node owns the scheduler turn, the task `0` flow is:
 
@@ -20,7 +24,7 @@ When a node owns the scheduler turn, the task `0` flow is:
 4. Reconcile the scheduler queue if registered scheduler nodes and queued scheduler nodes differ.
 5. If this node is not queue head, return unless takeover is eligible.
 6. If takeover is eligible, advance the queue and continue only if this node becomes queue head.
-7. Run `systemState::prune_oracle_nodes_if_epoch_changed`.
+7. On current `main`, run `systemState::prune_oracle_nodes_if_epoch_changed` only if the current epoch differs from `last_committee_prune_epoch`.
 8. Read due scheduled tasks.
 9. If no tasks are due, advance the scheduler queue and return without opening a scheduler round.
 10. If tasks are due, open the scheduler round, submit due task runs, and close the round.
@@ -37,6 +41,8 @@ The function checks the registered oracle nodes against the current IOTA validat
 
 The Move function is epoch-aware. Even if it is called more than once in the same epoch, the actual prune work is skipped after the first successful prune for that epoch.
 
+Current `main` mirrors that epoch check off-chain before submitting the transaction. This avoids spending gas on no-op prune transactions during scheduler turns that occur in an already-pruned epoch.
+
 ## Empty scheduler turns
 
 Previous scheduler behavior could open and close a scheduler round even when no task was due. In `v2.0.3`, empty scheduler turns no longer call:
@@ -44,7 +50,7 @@ Previous scheduler behavior could open and close a scheduler round even when no 
 - `start_scheduler_round`
 - `complete_scheduler_round`
 
-Instead, after prune and due-task discovery, the node advances the queue and returns.
+Instead, after any required prune and due-task discovery, the node advances the queue and returns.
 
 This reduces gas usage and keeps logs clearer for idle scheduler ticks.
 

@@ -17,8 +17,7 @@ import { buildCertificateBlob } from "../services/eventConsensus";
 import { loadPubkeysByAddrB64 } from "../services/pubkeys";
 import {
   listDueTasks,
-  readRegisteredOracleNodeByAddr,
-  readRegisteredOracleNodes,
+  readNodeRegistrySnapshot,
   readTaskRegistry,
   readTaskSchedulerQueue,
 } from "../services/schedulerReader";
@@ -40,6 +39,21 @@ function queueIndexOf(nodeIds: number[], nodeId: number): number {
 
 function schedulerNodesOnly<T extends { acceptedTemplateIds: number[] }>(nodes: T[]): T[] {
   return nodes.filter((node) => supportsScheduler(node.acceptedTemplateIds));
+}
+
+function normalizeEpoch(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "0";
+  try {
+    return BigInt(raw).toString();
+  } catch {
+    return raw;
+  }
+}
+
+async function shouldPruneCommittee(ctx: NodeContext, lastCommitteePruneEpoch: string): Promise<boolean> {
+  const systemState = await ctx.client.getLatestIotaSystemState();
+  return normalizeEpoch(lastCommitteePruneEpoch) !== normalizeEpoch((systemState as any).epoch);
 }
 
 function queueNeedsReconcile(queueNodeIds: number[], registeredNodeIds: number[], myNodeId: number): boolean {
@@ -161,7 +175,8 @@ export async function processSchedulerRound(ctx: NodeContext): Promise<void> {
   let processed = 0;
   processed += await abortStaleOpenRuns(ctx, nowMs);
 
-  const currentNode = await readRegisteredOracleNodeByAddr(ctx.client, ctx.myAddr);
+  const nodeRegistry = await readNodeRegistrySnapshot(ctx.client);
+  const currentNode = nodeRegistry.nodes.find((node) => node.addr === ctx.myAddr);
   if (!currentNode) {
     console.log(`[scheduler ${ctx.nodeId}] skip round: node not registered on-chain`);
     return;
@@ -175,7 +190,7 @@ export async function processSchedulerRound(ctx: NodeContext): Promise<void> {
     return;
   }
 
-  const registeredNodes = schedulerNodesOnly(await readRegisteredOracleNodes(ctx.client));
+  const registeredNodes = schedulerNodesOnly(nodeRegistry.nodes);
   const myNode = registeredNodes.find((node) => node.addr === ctx.myAddr);
   if (!myNode) return;
   const registeredNodeIds = registeredNodes.map((node) => node.nodeId);
@@ -220,12 +235,14 @@ export async function processSchedulerRound(ctx: NodeContext): Promise<void> {
     if (queue.headNodeId !== myNode.nodeId) return;
   }
 
-  try {
-    const digest = await pruneOracleNodesByValidatorCommitteeTx(ctx);
-    console.log(`[scheduler ${ctx.nodeId}] prune non-committee delegated nodes tx=${digest}`);
-  } catch (e: any) {
-    console.warn(`[scheduler ${ctx.nodeId}] prune non-committee delegated nodes failed: ${String(e?.message ?? e)}`);
-    return;
+  if (await shouldPruneCommittee(ctx, nodeRegistry.lastCommitteePruneEpoch)) {
+    try {
+      const digest = await pruneOracleNodesByValidatorCommitteeTx(ctx);
+      console.log(`[scheduler ${ctx.nodeId}] prune non-committee delegated nodes tx=${digest}`);
+    } catch (e: any) {
+      console.warn(`[scheduler ${ctx.nodeId}] prune non-committee delegated nodes failed: ${String(e?.message ?? e)}`);
+      return;
+    }
   }
 
   const maxTasks = optInt("SCHEDULER_MAX_TASKS_PER_ROUND", 100);

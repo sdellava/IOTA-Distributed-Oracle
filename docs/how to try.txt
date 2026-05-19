@@ -1,15 +1,18 @@
-Release v2.0.3 quick check
---------------------------
+Latest main quick check
+-----------------------
 
-To try the released version:
+To try the latest main version:
 
 git fetch --all --tags
-git checkout v2.0.3
+git checkout main
+git pull
 
 Task 0 is the scheduler role. It is enabled for nodes that accept template 0.
 Only the node that owns the scheduler queue turn runs the validator-committee
-prune. If no scheduled tasks are due, the node advances the scheduler queue
-without opening and closing an empty scheduler round.
+prune, and only when the current IOTA epoch is different from the last pruned
+epoch stored in the oracle NodeRegistry. If no scheduled tasks are due, the
+node advances the scheduler queue without opening and closing an empty
+scheduler round.
 
 open a new terminal and execute:
 cd ./node

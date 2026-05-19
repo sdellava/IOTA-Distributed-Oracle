@@ -26,6 +26,12 @@ export type RegisteredOracleNodeSnapshot = {
   acceptedTemplateIds: number[];
 };
 
+export type NodeRegistrySnapshot = {
+  id: string;
+  lastCommitteePruneEpoch: string;
+  nodes: RegisteredOracleNodeSnapshot[];
+};
+
 export type TaskSnapshot = {
   id: string;
   creator: string;
@@ -98,10 +104,17 @@ export async function readRegisteredOracleNodes(
   client: IotaClient,
   stateId = getStateId(),
 ): Promise<RegisteredOracleNodeSnapshot[]> {
+  return (await readNodeRegistrySnapshot(client, stateId)).nodes;
+}
+
+export async function readNodeRegistrySnapshot(
+  client: IotaClient,
+  stateId = getStateId(),
+): Promise<NodeRegistrySnapshot> {
   const nodeRegistryId = await resolveNodeRegistryId(client, stateId);
   const obj = await client.getObject({ id: nodeRegistryId, options: { showContent: true } } as any);
   const f = getMoveFields(obj);
-  return toArray(f.oracle_nodes)
+  const nodes = toArray(f.oracle_nodes)
     .map((item) => getAnyMoveFields(item))
     .map((node) => ({
       nodeId: toNum(node.node_id),
@@ -109,6 +122,11 @@ export async function readRegisteredOracleNodes(
       acceptedTemplateIds: toArray(node.accepted_template_ids).map(toNum).filter((x) => x >= 0),
     }))
     .filter((node) => node.nodeId > 0 && !!node.addr);
+  return {
+    id: nodeRegistryId,
+    lastCommitteePruneEpoch: toStr(f.last_committee_prune_epoch),
+    nodes,
+  };
 }
 
 export async function readRegisteredOracleNodeByAddr(

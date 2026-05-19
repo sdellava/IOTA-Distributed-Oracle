@@ -160,7 +160,9 @@ The branch also contains some generated files, environment updates, and a few co
 
 After the scheduler-v2 merge, release `v2.0.3` refines the runtime behavior of scheduler task `0`.
 
-The scheduler now calls `systemState::prune_oracle_nodes_if_epoch_changed` only when the node owns the scheduler turn, meaning it is the current scheduler queue head or has successfully taken over from a timed-out head node. Non-head scheduler nodes still inspect the queue so they can detect takeover eligibility, but they no longer submit the validator-committee prune transaction before it is their turn.
+The scheduler now considers `systemState::prune_oracle_nodes_if_epoch_changed` only when the node owns the scheduler turn, meaning it is the current scheduler queue head or has successfully taken over from a timed-out head node. Non-head scheduler nodes still inspect the queue so they can detect takeover eligibility, but they no longer submit the validator-committee prune transaction before it is their turn.
+
+Current `main` also performs an off-chain epoch guard before submitting the prune transaction: it compares the current IOTA epoch with `last_committee_prune_epoch` in the oracle `NodeRegistry`. If the registry has already been pruned for the current epoch, the prune transaction is skipped entirely.
 
 The empty-turn path has also been tightened. When the current scheduler node finds no due tasks, it advances the scheduler queue and returns without opening and closing an empty scheduler round. This avoids unnecessary `start_scheduler_round` and `complete_scheduler_round` transactions when there is no task to assign.
 
