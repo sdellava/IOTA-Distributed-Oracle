@@ -161,14 +161,6 @@ export async function processSchedulerRound(ctx: NodeContext): Promise<void> {
   let processed = 0;
   processed += await abortStaleOpenRuns(ctx, nowMs);
 
-  try {
-    const digest = await pruneOracleNodesByValidatorCommitteeTx(ctx);
-    console.log(`[scheduler ${ctx.nodeId}] prune non-committee delegated nodes tx=${digest}`);
-  } catch (e: any) {
-    console.warn(`[scheduler ${ctx.nodeId}] prune non-committee delegated nodes failed: ${String(e?.message ?? e)}`);
-    return;
-  }
-
   const currentNode = await readRegisteredOracleNodeByAddr(ctx.client, ctx.myAddr);
   if (!currentNode) {
     console.log(`[scheduler ${ctx.nodeId}] skip round: node not registered on-chain`);
@@ -226,6 +218,14 @@ export async function processSchedulerRound(ctx: NodeContext): Promise<void> {
     }
     queue = await readTaskSchedulerQueue(ctx.client);
     if (queue.headNodeId !== myNode.nodeId) return;
+  }
+
+  try {
+    const digest = await pruneOracleNodesByValidatorCommitteeTx(ctx);
+    console.log(`[scheduler ${ctx.nodeId}] prune non-committee delegated nodes tx=${digest}`);
+  } catch (e: any) {
+    console.warn(`[scheduler ${ctx.nodeId}] prune non-committee delegated nodes failed: ${String(e?.message ?? e)}`);
+    return;
   }
 
   const startDigest = await startSchedulerRoundTx(ctx);
