@@ -156,6 +156,16 @@ The delta versus `main` is substantial: `176` files changed, with approximately 
 
 The branch also contains some generated files, environment updates, and a few conflict-derived snapshot copies. These do not change the functional message of the release note, but they should still be reviewed for cleanup before definitively replacing `main`.
 
+## v2.0.3 scheduler refinement
+
+After the scheduler-v2 merge, release `v2.0.3` refines the runtime behavior of scheduler task `0`.
+
+The scheduler now calls `systemState::prune_oracle_nodes_if_epoch_changed` only when the node owns the scheduler turn, meaning it is the current scheduler queue head or has successfully taken over from a timed-out head node. Non-head scheduler nodes still inspect the queue so they can detect takeover eligibility, but they no longer submit the validator-committee prune transaction before it is their turn.
+
+The empty-turn path has also been tightened. When the current scheduler node finds no due tasks, it advances the scheduler queue and returns without opening and closing an empty scheduler round. This avoids unnecessary `start_scheduler_round` and `complete_scheduler_round` transactions when there is no task to assign.
+
+Release `v2.0.3` also removes the unused devnet `oracle_tasks_legacy.move` module and an obsolete devnet publish report that had been kept under the testnet task package.
+
 ## Executive summary
 
 `scheduler-v2` no longer just introduces on-chain scheduling. It now delivers a broader operational model: scheduled task creation, lifecycle tracking, balance-aware execution, task suspension/restart/deletion, node governance from the webview, and a new `LLM_OPEN_QUESTION` capability. Compared with `main`, this is a structural release that materially expands automation, governance, and day-to-day operability across Move, node, client, and webview layers.
