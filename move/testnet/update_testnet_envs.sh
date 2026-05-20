@@ -101,6 +101,7 @@ def remove_keys(path: Path, keys: list[str]) -> None:
 
 
 client_env = repo_root / "client" / ".env"
+client_example = repo_root / "client" / ".env.example"
 node_env = repo_root / "node" / ".env"
 node_example = repo_root / "node" / ".env.example"
 webview_example = repo_root / "webview" / ".env.example"
@@ -109,6 +110,16 @@ webview_env = repo_root / "webview" / ".env"
 runtime_pairs = [
     ("IOTA_NETWORK", "testnet"),
     ("IOTA_RPC_URL", "https://api.testnet.iota.cafe"),
+    ("IOTA_FAUCET_URL", "https://faucet.testnet.iota.cafe/gas"),
+    ("ORACLE_VALIDATOR_CAPS_PACKAGE_ID", values["TESTNET_ORACLE_VALIDATOR_CAPS_PACKAGE_ID"]),
+    ("ORACLE_TASKS_PACKAGE_ID", values["TESTNET_ORACLE_TASKS_PACKAGE_ID"]),
+    ("ORACLE_SYSTEM_PACKAGE_ID", values["TESTNET_ORACLE_SYSTEM_PACKAGE_ID"]),
+    ("ORACLE_STATE_ID", values["TESTNET_ORACLE_STATE_ID"]),
+    ("ORACLE_TREASURY_ID", values["TESTNET_ORACLE_TREASURY_ID"]),
+    ("CONTROLLER_CAP_ID", values["TESTNET_CONTROLLER_CAP_ID"]),
+    ("ORACLE_NODE_REGISTRY_ID", values["TESTNET_ORACLE_NODE_REGISTRY_ID"]),
+    ("ORACLE_TASK_REGISTRY_ID", values["TESTNET_ORACLE_TASK_REGISTRY_ID"]),
+    ("ORACLE_TASK_SCHEDULER_QUEUE_ID", values["TESTNET_ORACLE_TASK_SCHEDULER_QUEUE_ID"]),
 ]
 
 client_network_pairs = [
@@ -139,36 +150,21 @@ node_pairs = [
 
 webview_pairs = list(values.items())
 legacy_node_runtime_keys = [
-    "ORACLE_VALIDATOR_CAPS_PACKAGE_ID",
-    "ORACLE_TASKS_PACKAGE_ID",
-    "ORACLE_SYSTEM_PACKAGE_ID",
-    "ORACLE_STATE_ID",
-    "ORACLE_TREASURY_ID",
-    "CONTROLLER_CAP_ID",
-    "ORACLE_NODE_REGISTRY_ID",
-    "ORACLE_TASK_REGISTRY_ID",
-    "ORACLE_TASK_SCHEDULER_QUEUE_ID",
     "DELEGATED_CONTROLLER_CAP_ID",
 ]
 legacy_generic_runtime_keys = [
-    "ORACLE_VALIDATOR_CAPS_PACKAGE_ID",
-    "ORACLE_TASKS_PACKAGE_ID",
-    "ORACLE_SYSTEM_PACKAGE_ID",
-    "ORACLE_STATE_ID",
-    "ORACLE_TREASURY_ID",
-    "ORACLE_NODE_REGISTRY_ID",
-    "ORACLE_TASK_REGISTRY_ID",
-    "ORACLE_TASK_SCHEDULER_QUEUE_ID",
 ]
 
 upsert_lines(client_env, [*client_network_pairs, *runtime_pairs])
-upsert_lines(node_env, node_pairs)
-upsert_lines(node_example, node_pairs)
-upsert_lines(webview_env, webview_pairs)
-upsert_lines(webview_example, webview_pairs)
+upsert_lines(client_example, [*client_network_pairs, *runtime_pairs])
+upsert_lines(node_env, [*node_pairs, *runtime_pairs])
+upsert_lines(node_example, [*node_pairs, *runtime_pairs])
+upsert_lines(webview_env, [*webview_pairs, *runtime_pairs])
+upsert_lines(webview_example, [*webview_pairs, *runtime_pairs])
 remove_keys(node_env, legacy_node_runtime_keys)
 remove_keys(node_example, legacy_node_runtime_keys)
 remove_keys(client_env, legacy_generic_runtime_keys)
+remove_keys(client_example, legacy_generic_runtime_keys)
 remove_keys(webview_env, legacy_generic_runtime_keys)
 remove_keys(webview_example, legacy_generic_runtime_keys)
 PY

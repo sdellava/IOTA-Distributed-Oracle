@@ -185,6 +185,20 @@ def remove_keys(path: Path, keys: list[str]) -> None:
 
 client_files = [
     repo_root / "client" / ".env",
+    repo_root / "client" / ".env.example",
+]
+devnet_runtime_pairs = [
+    ("IOTA_NETWORK", "devnet"),
+    ("IOTA_RPC_URL", "https://api.devnet.iota.cafe"),
+    ("IOTA_FAUCET_URL", "https://faucet.devnet.iota.cafe/gas"),
+    ("ORACLE_TASKS_PACKAGE_ID", values["ORACLE_TASKS_PACKAGE_ID"]),
+    ("ORACLE_SYSTEM_PACKAGE_ID", values["ORACLE_SYSTEM_PACKAGE_ID"]),
+    ("ORACLE_STATE_ID", values["ORACLE_STATE_ID"]),
+    ("ORACLE_TREASURY_ID", values["ORACLE_TREASURY_ID"]),
+    ("CONTROLLER_CAP_ID", values["CONTROLLER_CAP_ID"]),
+    ("ORACLE_NODE_REGISTRY_ID", values["ORACLE_NODE_REGISTRY_ID"]),
+    ("ORACLE_TASK_REGISTRY_ID", values["ORACLE_TASK_REGISTRY_ID"]),
+    ("ORACLE_TASK_SCHEDULER_QUEUE_ID", values["ORACLE_TASK_SCHEDULER_QUEUE_ID"]),
 ]
 client_pairs = [
     ("DEVNET_IOTA_RPC_URL", "https://api.devnet.iota.cafe"),
@@ -249,39 +263,24 @@ legacy_scheduler_keys = [
 ]
 
 legacy_node_runtime_keys = [
-    "ORACLE_TASKS_PACKAGE_ID",
-    "ORACLE_SYSTEM_PACKAGE_ID",
-    "ORACLE_STATE_ID",
-    "ORACLE_TREASURY_ID",
-    "CONTROLLER_CAP_ID",
-    "ORACLE_NODE_REGISTRY_ID",
-    "ORACLE_TASK_REGISTRY_ID",
-    "ORACLE_TASK_SCHEDULER_QUEUE_ID",
     "ORACLE_VALIDATOR_CAPS_PACKAGE_ID",
     "DELEGATED_CONTROLLER_CAP_ID",
 ]
 
 legacy_generic_runtime_keys = [
-    "ORACLE_TASKS_PACKAGE_ID",
-    "ORACLE_SYSTEM_PACKAGE_ID",
-    "ORACLE_STATE_ID",
-    "ORACLE_TREASURY_ID",
-    "ORACLE_NODE_REGISTRY_ID",
-    "ORACLE_TASK_REGISTRY_ID",
-    "ORACLE_TASK_SCHEDULER_QUEUE_ID",
 ]
 
 for file in client_files:
-    upsert_lines(file, client_pairs, append_after="ORACLE_TREASURY_ID")
+    upsert_lines(file, [*devnet_runtime_pairs, *client_pairs], append_after="ORACLE_TREASURY_ID")
 
 for file in node_files:
-    upsert_lines(file, node_pairs, append_after="CONTROLLER_CAP_ID")
+    upsert_lines(file, [*devnet_runtime_pairs, *node_pairs], append_after="CONTROLLER_CAP_ID")
 
 for file in webview_direct_files:
-    upsert_lines(file, webview_direct_pairs, append_after="ORACLE_TREASURY_ID")
+    upsert_lines(file, [*devnet_runtime_pairs, *webview_direct_pairs], append_after="ORACLE_TREASURY_ID")
 
 for file in webview_example_files:
-    upsert_lines(file, webview_example_pairs, append_after="DEVNET_ORACLE_TREASURY_ID")
+    upsert_lines(file, [*devnet_runtime_pairs, *webview_example_pairs], append_after="DEVNET_ORACLE_TREASURY_ID")
 
 for file in [*client_files, *node_files, *webview_direct_files, *webview_example_files]:
     remove_keys(file, legacy_scheduler_keys)
