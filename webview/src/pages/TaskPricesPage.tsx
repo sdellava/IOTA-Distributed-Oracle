@@ -7,10 +7,30 @@ import type { IotaMarketPriceResponse, OracleTemplateCost } from "../types";
 type Props = {
   templates: OracleTemplateCost[];
   systemFeeBps: string | null | undefined;
+  minPayment: string | null | undefined;
   iotaMarketPrice: IotaMarketPriceResponse | null;
 };
 
 type CurrencyMode = "usd" | "eur";
+
+type TemplateQuote = {
+  base: bigint | null;
+  downloadUnit: bigint;
+  retentionUnit: bigint;
+  schedulerFee: bigint;
+  minPayment: bigint;
+  minRetentionDays: bigint;
+  minRetentionCost: bigint;
+  minPerNodeRaw: bigint | null;
+  minRawTask: bigint | null;
+  minSystemFee: bigint | null;
+  minTotal: bigint | null;
+  minRequiredPayment: bigint | null;
+  minDirect: bigint | null;
+  minScheduledPerRun: bigint | null;
+};
+
+const IOTA_DECIMALS = 1_000_000_000;
 
 function parseAtomicIota(value: string | null | undefined): bigint | null {
   if (!value) return null;
@@ -22,7 +42,12 @@ function parseAtomicIota(value: string | null | undefined): bigint | null {
 function parseBps(value: string | null | undefined): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return 0;
-  return parsed;
+  return Math.floor(parsed);
+}
+
+function parseU64(value: string | null | undefined): bigint {
+  const parsed = parseAtomicIota(value);
+  return parsed ?? 0n;
 }
 
 function formatNumber(value: number, minimumFractionDigits = 0, maximumFractionDigits = 6): string {
@@ -32,62 +57,115 @@ function formatNumber(value: number, minimumFractionDigits = 0, maximumFractionD
   });
 }
 
-function formatCurrency(value: number | null, currency: CurrencyMode): string {
-  if (value == null || !Number.isFinite(value)) return "-";
+function formatInteger(value: string | null | undefined): string {
+  const text = String(value ?? "").trim();
+  if (!text) return "-";
+  const n = Number(text);
+  if (!Number.isFinite(n)) return text;
+  return n.toLocaleString();
+}
+
+function formatIotaAtomic(value: bigint | null | undefined, digits = 6): string {
+  if (value == null) return "-";
+  return `${formatNumber(Number(value) / IOTA_DECIMALS, 0, digits)} IOTA`;
+}
+
+function formatCurrency(value: bigint | null, market: IotaMarketPriceResponse | null, currency: CurrencyMode): string {
+  if (value == null || !market) return "-";
+  const iota = Number(value) / IOTA_DECIMALS;
+  const usd = iota * market.usdPrice;
+  const selected = currency === "eur" ? usd * market.usdToEurRate : usd;
   return new Intl.NumberFormat(undefined, {
     style: "currency",
     currency: currency.toUpperCase(),
     minimumFractionDigits: 2,
-    maximumFractionDigits: value < 1 ? 6 : 2,
-  }).format(value);
+    maximumFractionDigits: selected < 1 ? 6 : 2,
+  }).format(selected);
 }
 
-function toIotaDisplay(value: string | null | undefined): string {
-  const atomic = parseAtomicIota(value);
-  if (atomic == null) return "-";
-  return `${formatNumber(Number(atomic) / 1_000_000_000, 2, 2)} IOTA`;
+function ceilDiv(value: bigint, divisor: bigint): bigint {
+  if (divisor <= 0n) return 0n;
+  return (value + divisor - 1n) / divisor;
 }
 
-function toIotaTooltip(value: string | null | undefined): string | undefined {
-  const atomic = parseAtomicIota(value);
-  if (atomic == null) return undefined;
-  return `${formatNumber(Number(atomic) / 1_000_000_000, 8, 8)} IOTA`;
+function computeTemplateQuote(template: OracleTemplateCost, systemFeeBps: number, minPayment: bigint): TemplateQuote {
+  const base = parseAtomicIota(template.basePriceIota);
+  const downloadUnit = parseU64(template.pricePerDownloadByteIota);
+  const retentionUnit = parseU64(template.pricePerRetentionDayIota);
+  const schedulerFee = parseU64(template.schedulerFeeIota);
+  const minRetentionDays = parseU64(template.minRetentionDays);
+  const minRetentionCost = retentionUnit * minRetentionDays;
+
+  if (base == null) {
+    return {
+      base,
+      downloadUnit,
+      retentionUnit,
+      schedulerFee,
+      minPayment,
+      minRetentionDays,
+      minRetentionCost,
+      minPerNodeRaw: null,
+      minRawTask: null,
+      minSystemFee: null,
+      minTotal: null,
+      minRequiredPayment: null,
+      minDirect: null,
+      minScheduledPerRun: null,
+    };
+  }
+
+  const minPerNodeRaw = base + minRetentionCost;
+  const minRawTask = minPerNodeRaw;
+  const minSystemFee = systemFeeBps > 0 ? ceilDiv(minRawTask * BigInt(systemFeeBps), 10_000n) : 0n;
+  const minTotal = minRawTask + minSystemFee;
+  const minRequiredPayment = minTotal > minPayment ? minTotal : minPayment;
+  const minDirect = minRequiredPayment;
+  const minScheduledPerRun = minRequiredPayment + schedulerFee;
+
+  return {
+    base,
+    downloadUnit,
+    retentionUnit,
+    schedulerFee,
+    minPayment,
+    minRetentionDays,
+    minRetentionCost,
+    minPerNodeRaw,
+    minRawTask,
+    minSystemFee,
+    minTotal,
+    minRequiredPayment,
+    minDirect,
+    minScheduledPerRun,
+  };
 }
 
-function toSelectedCurrencyValue(
-  template: OracleTemplateCost,
-  systemFeeBps: number,
-  market: IotaMarketPriceResponse | null,
-  currency: CurrencyMode,
-): number | null {
-  const totalAtomic = computePerNodeAtomic(template);
-  if (totalAtomic == null || !market) return null;
-
-  const grossIota = Number(totalAtomic) / 1_000_000_000;
-  const grossUsd = grossIota * market.usdPrice;
-  const totalUsd = grossUsd * (1 + systemFeeBps / 10_000);
-
-  return currency === "eur" ? totalUsd * market.usdToEurRate : totalUsd;
+function CostItem({
+  label,
+  value,
+  hint,
+  tone = "normal",
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: "normal" | "accent" | "muted";
+}) {
+  return (
+    <div className={`price-component price-component-${tone}`}>
+      <div className="template-kv-label">{label}</div>
+      <div className="template-kv-value mono">{value}</div>
+      {hint ? <div className="summary-hint">{hint}</div> : null}
+    </div>
+  );
 }
 
-function computePerNodeAtomic(template: OracleTemplateCost): bigint | null {
-  const baseAtomic = parseAtomicIota(template.basePriceIota);
-  if (baseAtomic == null) return null;
-
-  const retentionDays = Number(template.minRetentionDays ?? "0");
-  const retentionUnitAtomic = parseAtomicIota(template.pricePerRetentionDayIota) ?? 0n;
-  const retentionAtomic =
-    Number.isFinite(retentionDays) && retentionDays > 0
-      ? retentionUnitAtomic * BigInt(Math.floor(retentionDays))
-      : 0n;
-
-  return baseAtomic + retentionAtomic;
-}
-
-export default function TaskPricesPage({ templates, systemFeeBps, iotaMarketPrice }: Props) {
+export default function TaskPricesPage({ templates, systemFeeBps, minPayment, iotaMarketPrice }: Props) {
   const [showEuro, setShowEuro] = useState(false);
   const currency: CurrencyMode = showEuro ? "eur" : "usd";
   const feeBps = useMemo(() => parseBps(systemFeeBps), [systemFeeBps]);
+  const minPaymentAtomic = useMemo(() => parseU64(minPayment), [minPayment]);
 
   return (
     <section className="card card-spaced task-prices-page">
@@ -95,9 +173,9 @@ export default function TaskPricesPage({ templates, systemFeeBps, iotaMarketPric
         <div>
           <div className="section-title">Task Prices</div>
           <p className="task-prices-intro">
-            One row per approved task template and one column per configured pricing field. The last column shows the
-            estimated minimum total price in the selected currency, computed per node from base price plus minimum
-            retention cost, with system fee included. Price columns are shown in IOTA.
+            The page shows the complete pricing model used by task creation. Template values are fixed on-chain; runtime
+            values such as requested nodes, declared download bytes, retention days, and run count are applied when a
+            specific task is prepared.
           </p>
         </div>
 
@@ -107,106 +185,146 @@ export default function TaskPricesPage({ templates, systemFeeBps, iotaMarketPric
         </label>
       </div>
 
+      <div className="price-formula-panel">
+        <div className="subsection-title">Pricing formula</div>
+        <div className="price-formula-grid">
+          <CostItem
+            label="Per-node raw"
+            value="base + download + retention"
+            hint="download = extra bytes x unit price; retention = days x day price"
+            tone="accent"
+          />
+          <CostItem label="Raw task" value="per-node raw x requested nodes" />
+          <CostItem label="System fee" value="ceil(raw task x fee bps / 10000)" />
+          <CostItem label="Required payment" value="max(raw task + system fee, min payment)" tone="accent" />
+          <CostItem label="Direct one-shot" value="required payment" />
+          <CostItem label="Scheduled run" value="required payment + scheduler fee" />
+        </div>
+        <div className="summary-hint">
+          Current global system fee: <span className="mono">{feeBps} bps</span>. Minimum payment:{" "}
+          <span className="mono">{formatIotaAtomic(minPaymentAtomic)}</span>. IOTA/USD:{" "}
+          <span className="mono">{iotaMarketPrice ? iotaMarketPrice.usdPrice.toFixed(8) : "-"}</span>. USD/EUR:{" "}
+          <span className="mono">{iotaMarketPrice ? iotaMarketPrice.usdToEurRate.toFixed(4) : "-"}</span>.
+        </div>
+      </div>
+
       {!templates.length ? (
         <div className="empty">
           No approved task templates found on-chain for this network. Prices will appear here as soon as templates are
           available.
         </div>
       ) : (
-        <div className="table-wrap table-wrap-wide">
-          <table className="responsive-table">
-            <thead>
-              <tr>
-                <th>Template</th>
-                <th>Task type</th>
-                <th>Status</th>
-                <th>Base price</th>
-                <th>Input bytes max</th>
-                <th>Output bytes max</th>
-                <th>Included download bytes</th>
-                <th>Price / download byte</th>
-                <th>Storage</th>
-                <th>Min retention days</th>
-                <th>Max retention days</th>
-                <th>Retention unit cost / day</th>
-                <th>Per node</th>
-                <th>Estimated min total ({currency.toUpperCase()})</th>
-              </tr>
-            </thead>
-            <tbody>
-              {templates.map((template) => (
-                <tr key={template.templateId}>
-                  <td data-label="Template" className="mono">
-                    {template.templateId}
-                  </td>
-                  <td data-label="Task type">{template.taskType || "-"}</td>
-                  <td data-label="Status">
-                    <span className={`template-status-badge ${template.isEnabled ? "is-on" : "is-off"}`}>
-                      {template.isEnabled ? "Enabled" : "Disabled"}
-                    </span>
-                  </td>
-                  <td data-label="Base price" className="mono" title={toIotaTooltip(template.basePriceIota)}>
-                    {toIotaDisplay(template.basePriceIota)}
-                  </td>
-                  <td data-label="Input bytes max" className="mono">
-                    {template.maxInputBytes ?? "-"}
-                  </td>
-                  <td data-label="Output bytes max" className="mono">
-                    {template.maxOutputBytes ?? "-"}
-                  </td>
-                  <td data-label="Included download bytes" className="mono">
-                    {template.includedDownloadBytes ?? "-"}
-                  </td>
-                  <td
-                    data-label="Price / download byte"
-                    className="mono"
-                    title={toIotaTooltip(template.pricePerDownloadByteIota)}
-                  >
-                    {toIotaDisplay(template.pricePerDownloadByteIota)}
-                  </td>
-                  <td data-label="Storage">{template.allowStorage ? "Yes" : "No"}</td>
-                  <td data-label="Min retention days" className="mono">
-                    {template.minRetentionDays ?? "-"}
-                  </td>
-                  <td data-label="Max retention days" className="mono">
-                    {template.maxRetentionDays ?? "-"}
-                  </td>
-                  <td
-                    data-label="Retention unit cost / day"
-                    className="mono"
-                    title={toIotaTooltip(template.pricePerRetentionDayIota)}
-                  >
-                    {toIotaDisplay(template.pricePerRetentionDayIota)}
-                  </td>
-                  <td
-                    data-label="Per node"
-                    className="mono"
-                    title={
-                      computePerNodeAtomic(template) == null
-                        ? undefined
-                        : `${formatNumber(Number(computePerNodeAtomic(template)!) / 1_000_000_000, 8, 8)} IOTA`
-                    }
-                  >
-                    {computePerNodeAtomic(template) == null
-                      ? "-"
-                      : `${formatNumber(Number(computePerNodeAtomic(template)!) / 1_000_000_000, 2, 2)} IOTA`}
-                  </td>
-                  <td data-label={`Estimated min total (${currency.toUpperCase()})`} className="mono">
-                    {formatCurrency(toSelectedCurrencyValue(template, feeBps, iotaMarketPrice, currency), currency)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="price-template-list">
+          {templates.map((template) => {
+            const quote = computeTemplateQuote(template, feeBps, minPaymentAtomic);
+            return (
+              <article className="price-template-card" key={template.templateId}>
+                <div className="price-template-head">
+                  <div>
+                    <div className="template-kv-label">Template</div>
+                    <div className="price-template-title">
+                      <span className="mono">{template.templateId}</span>
+                      <span>{template.taskType || "-"}</span>
+                    </div>
+                  </div>
+                  <span className={`template-status-badge ${template.isEnabled ? "is-on" : "is-off"}`}>
+                    {template.isEnabled ? "Enabled" : "Disabled"}
+                  </span>
+                </div>
+
+                <div className="price-component-grid">
+                  <CostItem
+                    label="Base price"
+                    value={formatIotaAtomic(quote.base)}
+                    hint="Fixed base amount for one node execution."
+                  />
+                  <CostItem
+                    label="Scheduler fee"
+                    value={formatIotaAtomic(quote.schedulerFee)}
+                    hint="Added only to each scheduled run, not to direct one-shot tasks."
+                  />
+                  <CostItem
+                    label="Input bytes max"
+                    value={formatInteger(template.maxInputBytes)}
+                    hint="Maximum accepted payload size for this template."
+                    tone="muted"
+                  />
+                  <CostItem
+                    label="Output bytes max"
+                    value={formatInteger(template.maxOutputBytes)}
+                    hint="Maximum declared output/download size."
+                    tone="muted"
+                  />
+                  <CostItem
+                    label="Included download bytes"
+                    value={formatInteger(template.includedDownloadBytes)}
+                    hint="Bytes included before extra download pricing starts."
+                  />
+                  <CostItem
+                    label="Price per extra byte"
+                    value={formatIotaAtomic(quote.downloadUnit, 9)}
+                    hint="Applied to max(0, declared bytes - included bytes)."
+                  />
+                  <CostItem
+                    label="Storage"
+                    value={template.allowStorage ? "Allowed" : "Not allowed"}
+                    hint="Controls whether retention pricing can be used."
+                    tone={template.allowStorage ? "accent" : "muted"}
+                  />
+                  <CostItem
+                    label="Retention days"
+                    value={`${formatInteger(template.minRetentionDays)} min / ${formatInteger(template.maxRetentionDays)} max`}
+                    hint="Runtime retention_days must stay inside this range."
+                  />
+                  <CostItem
+                    label="Retention price/day"
+                    value={formatIotaAtomic(quote.retentionUnit)}
+                    hint="Multiplied by task retention_days."
+                  />
+                  <CostItem
+                    label="Min retention cost"
+                    value={formatIotaAtomic(quote.minRetentionCost)}
+                    hint={`${quote.minRetentionDays.toString()} day(s) x retention price/day.`}
+                  />
+                  <CostItem
+                    label="Minimum per-node raw"
+                    value={formatIotaAtomic(quote.minPerNodeRaw)}
+                    hint="Base price + minimum retention cost, before requested_nodes."
+                    tone="accent"
+                  />
+                  <CostItem
+                    label="System fee on minimum"
+                    value={formatIotaAtomic(quote.minSystemFee)}
+                    hint={`${feeBps} bps rounded up on minimum raw task price.`}
+                  />
+                  <CostItem
+                    label="Required payment min"
+                    value={formatIotaAtomic(quote.minRequiredPayment)}
+                    hint={`After min payment floor: ${formatIotaAtomic(quote.minPayment)}.`}
+                    tone="accent"
+                  />
+                  <CostItem
+                    label="Direct one-shot min"
+                    value={formatIotaAtomic(quote.minDirect)}
+                    hint={formatCurrency(quote.minDirect, iotaMarketPrice, currency)}
+                    tone="accent"
+                  />
+                  <CostItem
+                    label="Scheduled per-run min"
+                    value={formatIotaAtomic(quote.minScheduledPerRun)}
+                    hint={formatCurrency(quote.minScheduledPerRun, iotaMarketPrice, currency)}
+                    tone="accent"
+                  />
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
 
       <div className="summary-hint">
-        Retention unit cost/day is the on-chain storage cost for one day. Per node =
-        {" "}base price + (min retention days x retention unit cost/day). Estimated min total applies system fee to
-        that per-node amount. System fee: {feeBps} bps. IOTA/USD: {iotaMarketPrice ? iotaMarketPrice.usdPrice.toFixed(8) : "-"}.
-        {" "}
-        USD/EUR: {iotaMarketPrice ? iotaMarketPrice.usdToEurRate.toFixed(4) : "-"}.
+        Minimum totals assume one requested node, zero extra download bytes, and the template minimum retention days.
+        Real task quotes scale with requested_nodes, declared download bytes, retention_days, and scheduled run count.
       </div>
     </section>
   );

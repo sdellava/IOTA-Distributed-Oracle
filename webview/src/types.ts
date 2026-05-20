@@ -38,6 +38,7 @@ export type OracleTemplateCost = {
   taskType: string;
   isEnabled: boolean;
   basePriceIota: string | null;
+  schedulerFeeIota: string | null;
   maxInputBytes: string | null;
   maxOutputBytes: string | null;
   includedDownloadBytes: string | null;
@@ -156,12 +157,15 @@ export type PreparedWalletTaskResponse = {
 export type PreparedTaskScheduleWalletResponse = {
   ok: true;
   mode: "prepare-task-schedule-webview";
+  executionMode: "direct" | "scheduled";
   sender: string;
   serializedTransaction: string;
   gasBudget: string;
   initialFunds: string;
+  requiredPayment: string;
   requiredPerRun: string;
   estimatedRuns: string | null;
+  targetFunction: string;
   template: {
     templateId: number;
     taskType: string;

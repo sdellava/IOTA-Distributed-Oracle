@@ -46,6 +46,7 @@ const SCHEDULER_TEMPLATE: OracleTemplateCost = {
   taskType: "Scheduler loop capability",
   isEnabled: true,
   basePriceIota: null,
+  schedulerFeeIota: null,
   maxInputBytes: null,
   maxOutputBytes: null,
   includedDownloadBytes: null,

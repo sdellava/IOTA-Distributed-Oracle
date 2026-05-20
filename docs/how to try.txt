@@ -30,6 +30,17 @@ open a new terminal and execute:
 cd ./client
 npm run create -- .\examples\task_2nodes.json
 
+On the direct-one-shot development branch, the client and webview choose the
+Move entry automatically:
+
+- tasks without an interval are submitted with
+  oracle_tasks::create_and_submit_direct_task and are assigned immediately;
+- tasks with an interval and at least two effective runs are scheduled with
+  oracle_tasks::create_task and then handled by task 0.
+
+In the webview, leave "Interval (minutes)" empty for a direct one-shot task.
+Set an interval only when the task must run more than once.
+
 npm run create -- .\examples\task_GET_HTML_STRIP_DYNAMIC.json
 
 npm run create -- .\examples\task_GET_JSON_CANONICAL.json 

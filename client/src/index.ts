@@ -1,7 +1,6 @@
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
-import { toB64 } from "@iota/bcs";
 import { Transaction, coinWithBalance } from "@iota/iota-sdk/transactions";
 
 import { iotaClient } from "./iota";
@@ -59,6 +58,7 @@ type CreateTaskContext = {
   randomId: string;
   clockId: string;
   prepared: PreparedTask;
+  requiredPayment: bigint;
   requiredPerRun: bigint;
   gasBudget: bigint;
   fundingSource: "gas" | "dedicated";
@@ -109,12 +109,15 @@ type PreparedWalletTransaction = {
 type PreparedTaskScheduleWalletTransaction = {
   ok: true;
   mode: "prepare-task-schedule-webview";
+  executionMode: "direct" | "scheduled";
   sender: string;
   serializedTransaction: string;
   gasBudget: string;
   initialFunds: string;
+  requiredPayment: string;
   requiredPerRun: string;
   estimatedRuns: string | null;
+  targetFunction: string;
   template: {
     templateId: number;
     taskType: string;
@@ -476,14 +479,19 @@ function normalizeScheduleInput(input: any): ScheduleInput {
   const startRaw = input?.start_schedule_ms ?? input?.startScheduleMs ?? input?.start ?? input?.startAt;
   const endRaw = input?.end_schedule_ms ?? input?.endScheduleMs ?? input?.end ?? input?.endAt ?? 0;
   const intervalRaw =
-    input?.interval_ms ?? input?.intervalMs ?? (input?.interval_minutes != null ? BigInt(input.interval_minutes) * 60_000n : input?.intervalMinutes != null ? BigInt(input.intervalMinutes) * 60_000n : null);
+    input?.interval_ms ??
+    input?.intervalMs ??
+    (input?.interval_minutes != null
+      ? BigInt(input.interval_minutes) * 60_000n
+      : input?.intervalMinutes != null
+        ? BigInt(input.intervalMinutes) * 60_000n
+        : 0n);
   const fundsRaw =
     input?.initial_funds_nano_iota ??
     input?.initialFundsNanoIota ??
     input?.initial_funds_iota ??
     input?.initialFundsIota;
 
-  if (intervalRaw == null) throw new Error("Missing interval_ms or intervalMinutes in schedule.");
   if (fundsRaw == null || String(fundsRaw).trim() === "") throw new Error("Missing initial funds for schedule.");
 
   const startScheduleMs = parseTimestampMs(startRaw, "start_schedule_ms");
@@ -497,7 +505,7 @@ function normalizeScheduleInput(input: any): ScheduleInput {
   assertMinuteAligned(startScheduleMs, "start_schedule_ms");
   assertMinuteAligned(intervalMs, "interval_ms");
   if (endScheduleMs !== 0n) assertMinuteAligned(endScheduleMs, "end_schedule_ms");
-  if (intervalMs < MIN_SCHEDULE_INTERVAL_MS) {
+  if (intervalMs !== 0n && intervalMs < MIN_SCHEDULE_INTERVAL_MS) {
     throw new Error("interval_ms must be at least 300000 ms (5 minutes).");
   }
 
@@ -1168,19 +1176,18 @@ function extractTaskIdFromTx(res: any): string {
   return "";
 }
 
-function makeCreateTaskTx(ctx: CreateTaskContext): Transaction {
-  const { tasksPkg, registryId, stateId, nodeRegistryId, prepared, requiredPerRun, gasBudget, fundingSource } = ctx;
+function makeCreateAndSubmitDirectTaskTx(ctx: CreateTaskContext): Transaction {
+  const { tasksPkg, stateId, nodeRegistryId, treasuryId, randomId, clockId, prepared, requiredPayment, gasBudget, fundingSource } = ctx;
   const tx = new Transaction();
   tx.setGasBudget(Number(gasBudget));
-  const paymentCoin = createFundingCoin(tx, requiredPerRun, fundingSource);
-  const startScheduleMs = BigInt(Date.now());
+  const paymentCoin = createFundingCoin(tx, requiredPayment, fundingSource);
 
   tx.moveCall({
-    target: `${tasksPkg}::oracle_tasks::create_task`,
+    target: `${tasksPkg}::oracle_tasks::create_and_submit_direct_task`,
     arguments: [
-      tx.object(registryId),
       tx.object(stateId),
       tx.object(nodeRegistryId),
+      tx.object(treasuryId),
       paymentCoin,
       tx.pure(bcsU64(prepared.templateId)),
       tx.pure(bcsU64(prepared.requestedNodes)),
@@ -1191,9 +1198,8 @@ function makeCreateTaskTx(ctx: CreateTaskContext): Transaction {
       tx.pure(bcsU8(prepared.mediationMode)),
       tx.pure(bcsU64(prepared.varianceMax)),
       tx.pure(bcsU8(prepared.createResultControllerCap)),
-      tx.pure(bcsU64(startScheduleMs)),
-      tx.pure(bcsU64(0)),
-      tx.pure(bcsU64(0)),
+      tx.object(randomId),
+      tx.object(clockId),
     ],
   });
   return tx;
@@ -1201,8 +1207,21 @@ function makeCreateTaskTx(ctx: CreateTaskContext): Transaction {
 
 function buildCreateTaskVariants(ctx: CreateTaskContext): Record<string, () => Transaction> {
   return {
-    scheduled_task_v1: () => makeCreateTaskTx(ctx),
+    direct_task_v1: () => makeCreateAndSubmitDirectTaskTx(ctx),
   };
+}
+
+function isRecurringSchedule(schedule: ScheduleInput): boolean {
+  return (
+    schedule.intervalMs >= MIN_SCHEDULE_INTERVAL_MS &&
+    (schedule.endScheduleMs === 0n || schedule.endScheduleMs > schedule.startScheduleMs)
+  );
+}
+
+function estimateScheduleRuns(schedule: ScheduleInput): string | null {
+  if (!isRecurringSchedule(schedule)) return "1";
+  if (schedule.endScheduleMs === 0n) return null;
+  return ((schedule.endScheduleMs - schedule.startScheduleMs) / schedule.intervalMs + 1n).toString();
 }
 
 function makeCreateTaskWithScheduleTx(args: {
@@ -1241,6 +1260,49 @@ function makeCreateTaskWithScheduleTx(args: {
     ],
   });
   return tx;
+}
+
+function makeCreateTaskForScheduleInputTx(args: {
+  tasksPkg: string;
+  registryId: string;
+  stateId: string;
+  nodeRegistryId: string;
+  treasuryId: string;
+  randomId: string;
+  clockId: string;
+  prepared: PreparedTask;
+  requiredPayment: bigint;
+  schedule: ScheduleInput;
+  gasBudget: bigint;
+  fundingSource: "gas" | "dedicated";
+}): { tx: Transaction; executionMode: "direct" | "scheduled"; targetFunction: string } {
+  if (isRecurringSchedule(args.schedule)) {
+    return {
+      tx: makeCreateTaskWithScheduleTx(args),
+      executionMode: "scheduled",
+      targetFunction: "create_task",
+    };
+  }
+
+  return {
+    tx: makeCreateAndSubmitDirectTaskTx({
+      tasksPkg: args.tasksPkg,
+      registryId: args.registryId,
+      stateId: args.stateId,
+      nodeRegistryId: args.nodeRegistryId,
+      iotaSystemStateId: getIotaSystemStateId(),
+      treasuryId: args.treasuryId,
+      randomId: args.randomId,
+      clockId: args.clockId,
+      prepared: args.prepared,
+      requiredPayment: args.requiredPayment,
+      requiredPerRun: args.requiredPayment,
+      gasBudget: args.gasBudget,
+      fundingSource: args.fundingSource,
+    }),
+    executionMode: "direct",
+    targetFunction: "create_and_submit_direct_task",
+  };
 }
 
 function normalizeObjectId(raw: unknown, field: string): string {
@@ -1405,12 +1467,7 @@ async function pickCreateTaskVariant(
   sender: string,
   builders: Record<string, () => Transaction>,
 ): Promise<string[]> {
-  const forced = process.env.CREATE_TASK_VARIANT?.trim();
   const names = Object.keys(builders);
-  if (forced) {
-    if (!builders[forced]) throw new Error(`Unknown CREATE_TASK_VARIANT=${forced}`);
-    return [forced];
-  }
 
   const inspect = (client as any).devInspectTransactionBlock;
   if (typeof inspect !== "function") return names;
@@ -1464,8 +1521,7 @@ async function executeCreateTask(
 }
 
 async function serializeTransactionForWallet(tx: Transaction, client: AnyClient): Promise<string> {
-  const bytes = await tx.build({ client });
-  return toB64(bytes);
+  return tx.serialize();
 }
 
 async function prepareCreateTaskPlan(client: AnyClient, sender: string, taskArg?: string) {
@@ -1512,10 +1568,10 @@ async function prepareCreateTaskPlanWithOptions(
   );
   const balance = await fetchIotaBalance(client, sender);
   const treasuryBalanceBefore = await fetchTreasuryBalance(client, treasuryId, systemPkg);
-  const needed = requiredPerRun + gasBudget;
+  const needed = requiredPayment + gasBudget;
   if (!options.skipBalanceCheck && balance < needed) {
     throw new Error(
-      `Insufficient IOTA for address ${sender}: balance=${balance.toString()} required_per_run=${requiredPerRun.toString()} gas_budget=${gasBudget.toString()} total_needed=${needed.toString()}`,
+      `Insufficient IOTA for address ${sender}: balance=${balance.toString()} required_payment=${requiredPayment.toString()} gas_budget=${gasBudget.toString()} total_needed=${needed.toString()}`,
     );
   }
 
@@ -1529,9 +1585,10 @@ async function prepareCreateTaskPlanWithOptions(
     randomId,
     clockId,
     prepared,
+    requiredPayment,
     requiredPerRun,
     gasBudget,
-    fundingSource: await chooseFundingSource(client, sender, requiredPerRun, gasBudget),
+    fundingSource: await chooseFundingSource(client, sender, requiredPayment, gasBudget),
   });
 
   return {
@@ -1584,32 +1641,39 @@ async function runPrepareTaskScheduleWebview(
 
   const tasksPkg = getTasksPackageId();
   const registryId = getTaskRegistryId();
-  const tx = makeCreateTaskWithScheduleTx({
+  const recurringSchedule = isRecurringSchedule(schedule);
+  const fundingAmount = recurringSchedule ? schedule.initialFunds : plan.requiredPayment;
+  const txPlan = makeCreateTaskForScheduleInputTx({
     tasksPkg,
     registryId,
     stateId: plan.stateId,
     nodeRegistryId: plan.nodeRegistryId,
+    treasuryId: plan.treasuryId,
+    randomId: plan.randomId,
+    clockId: plan.clockId,
     prepared: plan.prepared,
+    requiredPayment: plan.requiredPayment,
     schedule,
     gasBudget: plan.gasBudget,
-    fundingSource: await chooseFundingSource(client, normalizedSender, schedule.initialFunds, plan.gasBudget),
+    fundingSource: await chooseFundingSource(client, normalizedSender, fundingAmount, plan.gasBudget),
   });
+  const tx = txPlan.tx;
   tx.setSender(normalizedSender);
 
-  const estimatedRuns =
-    schedule.endScheduleMs > 0n && schedule.endScheduleMs >= schedule.startScheduleMs
-      ? ((schedule.endScheduleMs - schedule.startScheduleMs) / schedule.intervalMs + 1n).toString()
-      : null;
+  const estimatedRuns = estimateScheduleRuns(schedule);
 
   const payload: PreparedTaskScheduleWalletTransaction = {
     ok: true,
     mode: "prepare-task-schedule-webview",
+    executionMode: txPlan.executionMode,
     sender: normalizedSender,
     serializedTransaction: await serializeTransactionForWallet(tx, client),
     gasBudget: plan.gasBudget.toString(),
-    initialFunds: schedule.initialFunds.toString(),
+    initialFunds: fundingAmount.toString(),
+    requiredPayment: plan.requiredPayment.toString(),
     requiredPerRun: plan.requiredPerRun.toString(),
     estimatedRuns,
+    targetFunction: txPlan.targetFunction,
     template: {
       templateId: plan.template.templateId,
       taskType: plan.template.taskType,

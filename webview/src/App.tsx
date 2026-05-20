@@ -459,9 +459,9 @@ export default function App() {
                       >
                         <RcMenuItem key="monitoring">Monitoring</RcMenuItem>
                         <Divider />
-                        <RcMenuItem key="scheduled">Scheduled task list</RcMenuItem>
+                        <RcMenuItem key="scheduled">Task list</RcMenuItem>
                         <Divider />
-                        <RcMenuItem key="run">Schedule a new task</RcMenuItem>
+                        <RcMenuItem key="run">Create a new task</RcMenuItem>
                         <Divider />
                         <RcMenuItem key="validate">View or validate a task</RcMenuItem>
                         <Divider />
@@ -715,6 +715,7 @@ export default function App() {
         <TaskPricesPage
           templates={availableTemplates}
           systemFeeBps={status?.costs.systemFeeBps}
+          minPayment={status?.costs.minPayment}
           iotaMarketPrice={iotaMarketPrice}
         />
       ) : pageMode === "terms" ? (

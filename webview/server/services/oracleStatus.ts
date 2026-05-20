@@ -806,6 +806,7 @@ function parseTaskTemplate(dynamicFieldContent: unknown): OracleTemplateCost | n
     taskType: toText(valueFields.task_type),
     isEnabled: toBool(valueFields.is_enabled),
     basePriceIota: toU64String(valueFields.base_price_iota),
+    schedulerFeeIota: toU64String(valueFields.scheduler_fee_iota),
     maxInputBytes: toU64String(valueFields.max_input_bytes),
     maxOutputBytes: toU64String(valueFields.max_output_bytes),
     includedDownloadBytes: toU64String(valueFields.included_download_bytes),

@@ -5,8 +5,8 @@
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "scripts": {
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
-    "dev:web": "vite",
+    "dev": "concurrently -k --success first --names server,web \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:web": "vite --strictPort",
     "dev:server": "tsx watch server/index.ts",
     "build": "vite build",
     "preview": "vite preview",

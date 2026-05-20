@@ -621,6 +621,66 @@ th {
   line-height: 1.55;
 }
 
+.price-formula-panel,
+.price-template-card {
+  border: 1px solid var(--theme-card-border, rgba(143, 162, 208, 0.14));
+  border-radius: 8px;
+  background: var(--theme-input-bg, #ffffff);
+  padding: 16px;
+}
+
+.price-formula-grid,
+.price-component-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.price-formula-grid {
+  margin-top: 12px;
+}
+
+.price-template-list {
+  display: grid;
+  gap: 14px;
+}
+
+.price-template-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.price-template-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: baseline;
+  color: var(--theme-text, #171d26);
+  font-weight: 800;
+}
+
+.price-component {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--theme-card-border, rgba(143, 162, 208, 0.14));
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(247, 250, 255, 0.8);
+  min-width: 0;
+}
+
+.price-component-accent {
+  border-color: rgba(37, 99, 245, 0.32);
+  background: rgba(37, 99, 245, 0.06);
+}
+
+.price-component-muted {
+  background: rgba(238, 243, 251, 0.62);
+}
+
 .currency-toggle {
   display: inline-flex;
   align-items: center;
@@ -947,6 +1007,11 @@ th {
 
   .task-prices-head {
     align-items: stretch;
+  }
+
+  .price-formula-grid,
+  .price-component-grid {
+    grid-template-columns: 1fr;
   }
 
   .task-toolbar label {

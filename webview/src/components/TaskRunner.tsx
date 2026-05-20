@@ -64,6 +64,8 @@ type WalletScheduledResult = {
 };
 
 type TaskBudgetQuote = {
+  requiredPaymentNanoIota: bigint;
+  requiredPaymentIotaText: string;
   requiredPerRunNanoIota: bigint;
   requiredPerRunIotaText: string;
 };
@@ -1351,8 +1353,11 @@ export default function TaskRunner({
           const { task } = normalizeTaskText(taskText);
           const prepared = await prepareWalletTask(task, currentAccount.address, activeNetwork);
           if (cancelled) return;
+          const requiredPaymentNanoIota = BigInt(prepared.requiredPayment);
           const requiredPerRunNanoIota = BigInt(prepared.requiredPerRun);
           setBudgetQuote({
+            requiredPaymentNanoIota,
+            requiredPaymentIotaText: formatNanoIotaToIota(requiredPaymentNanoIota),
             requiredPerRunNanoIota,
             requiredPerRunIotaText: formatNanoIotaToIota(requiredPerRunNanoIota),
           });
@@ -1412,7 +1417,7 @@ export default function TaskRunner({
     if (!budgetQuote?.requiredPerRunNanoIota || budgetQuote.requiredPerRunNanoIota <= 0n) return;
 
     if (recurringIntervalMinutes == null) {
-      const oneRunBudget = formatNanoIotaToIota(budgetQuote.requiredPerRunNanoIota);
+      const oneRunBudget = formatNanoIotaToIota(budgetQuote.requiredPaymentNanoIota);
       if (scheduleEnd !== toDatetimeLocalValue(normalizedStartMs)) {
         setScheduleEnd(toDatetimeLocalValue(normalizedStartMs));
       }
@@ -1435,6 +1440,7 @@ export default function TaskRunner({
       setScheduleInitialFundsIota(requiredBudget);
     }
   }, [
+    budgetQuote?.requiredPaymentNanoIota,
     budgetQuote?.requiredPerRunNanoIota,
     normalizedEndMs,
     normalizedStartMs,
@@ -1445,8 +1451,11 @@ export default function TaskRunner({
   ]);
 
   const schedulePreview = useMemo(() => {
-    const requiredPerRun = budgetQuote?.requiredPerRunNanoIota ?? 0n;
-    if (requiredPerRun <= 0n) {
+    const requiredRunBudget =
+      recurringIntervalMinutes == null
+        ? (budgetQuote?.requiredPaymentNanoIota ?? 0n)
+        : (budgetQuote?.requiredPerRunNanoIota ?? 0n);
+    if (requiredRunBudget <= 0n) {
       return {
         startMs: normalizedStartMs,
         endMs: recurringIntervalMinutes == null ? normalizedStartMs : Math.max(normalizedEndMs, normalizedStartMs),
@@ -1464,7 +1473,7 @@ export default function TaskRunner({
       return {
         startMs: normalizedStartMs,
         endMs: normalizedStartMs,
-        possibleRuns: budgetNanoIota > 0n ? budgetNanoIota / requiredPerRun : 0n,
+        possibleRuns: budgetNanoIota >= requiredRunBudget ? 1n : 0n,
       };
     }
 
@@ -1486,7 +1495,7 @@ export default function TaskRunner({
       budgetNanoIota = 0n;
     }
 
-    const possibleRuns = budgetNanoIota / requiredPerRun;
+    const possibleRuns = budgetNanoIota / requiredRunBudget;
     const endMs =
       possibleRuns > 0n
         ? normalizedStartMs + Number(possibleRuns - 1n) * recurringIntervalMinutes * 60_000
@@ -1498,6 +1507,7 @@ export default function TaskRunner({
       possibleRuns,
     };
   }, [
+    budgetQuote?.requiredPaymentNanoIota,
     budgetQuote?.requiredPerRunNanoIota,
     normalizedEndMs,
     normalizedStartMs,
@@ -1507,9 +1517,12 @@ export default function TaskRunner({
   ]);
 
   const budgetStepIota = useMemo(() => {
+    if (recurringIntervalMinutes == null && budgetQuote?.requiredPaymentIotaText) {
+      return budgetQuote.requiredPaymentIotaText;
+    }
     if (budgetQuote?.requiredPerRunIotaText) return budgetQuote.requiredPerRunIotaText;
     return "1";
-  }, [budgetQuote?.requiredPerRunIotaText]);
+  }, [budgetQuote?.requiredPaymentIotaText, budgetQuote?.requiredPerRunIotaText, recurringIntervalMinutes]);
 
   useEffect(() => {
     const templateId =
@@ -1661,15 +1674,20 @@ export default function TaskRunner({
       let quote = budgetQuote;
       if (!quote) {
         const preparedQuote = await prepareWalletTask(task, currentAccount.address, activeNetwork);
+        const requiredPaymentNanoIota = BigInt(preparedQuote.requiredPayment);
         const requiredPerRunNanoIota = BigInt(preparedQuote.requiredPerRun);
         quote = {
+          requiredPaymentNanoIota,
+          requiredPaymentIotaText: formatNanoIotaToIota(requiredPaymentNanoIota),
           requiredPerRunNanoIota,
           requiredPerRunIotaText: formatNanoIotaToIota(requiredPerRunNanoIota),
         };
         setBudgetQuote(quote);
       }
-      const requiredPerRun = quote.requiredPerRunNanoIota;
-      if (requiredPerRun <= 0n) {
+      const intervalMinutesRaw = scheduleIntervalMinutes.trim();
+      const hasRecurringInterval = intervalMinutesRaw.length > 0;
+      const requiredBudgetPerRun = hasRecurringInterval ? quote.requiredPerRunNanoIota : quote.requiredPaymentNanoIota;
+      if (requiredBudgetPerRun <= 0n) {
         throw new Error("Unable to determine the required budget per run for this task.");
       }
 
@@ -1684,8 +1702,6 @@ export default function TaskRunner({
         // non-blocking: fallback extraction can still work without a pre-snapshot
       }
 
-      const intervalMinutesRaw = scheduleIntervalMinutes.trim();
-      const hasRecurringInterval = intervalMinutesRaw.length > 0;
       const intervalMinutes = hasRecurringInterval ? Number(intervalMinutesRaw) : MIN_SCHEDULE_INTERVAL_MINUTES;
       if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
         throw new Error("Interval must be a positive number of minutes.");
@@ -1694,21 +1710,18 @@ export default function TaskRunner({
         throw new Error(`Interval must be at least ${MIN_SCHEDULE_INTERVAL_MINUTES} minutes.`);
       }
 
-      const maxRuns = budgetNanoIota / requiredPerRun;
+      const maxRuns = budgetNanoIota / requiredBudgetPerRun;
       if (maxRuns <= 0n) {
         throw new Error("Initial funds are lower than the required budget for one run.");
       }
 
       const endMs = hasRecurringInterval ? schedulePreview.endMs : startMs;
       if (hasRecurringInterval) {
-        if (endMs <= startMs) {
+        const effectiveRuns =
+          endMs > startMs ? BigInt(Math.floor((endMs - startMs) / (intervalMinutes * 60_000)) + 1) : 1n;
+        if (effectiveRuns >= 2n && maxRuns < effectiveRuns) {
           throw new Error(
-            "A recurring schedule needs an end time at least one interval after the start, or a budget that covers at least two runs.",
-          );
-        }
-        if (maxRuns < 2n) {
-          throw new Error(
-            "The current budget covers only one run. Increase the budget or use an empty interval for a one-shot task.",
+            "The current budget does not cover the requested scheduled runs. Increase the budget or shorten the schedule.",
           );
         }
       }
@@ -1743,12 +1756,14 @@ export default function TaskRunner({
       const taskId =
         extractCreatedTaskId(confirmedExecution) ||
         extractCreatedTaskId(execution) ||
-        (await findScheduledTaskIdByRegistry({
-          network: activeNetwork,
-          creator: currentAccount.address,
-          prepared,
-          existingIds: existingScheduleIds,
-        })) ||
+        (prepared.executionMode === "scheduled"
+          ? await findScheduledTaskIdByRegistry({
+              network: activeNetwork,
+              creator: currentAccount.address,
+              prepared,
+              existingIds: existingScheduleIds,
+            })
+          : null) ||
         null;
 
       setTaskScheduleResult({
@@ -1766,10 +1781,10 @@ export default function TaskRunner({
 
   return (
     <section className="card task-card">
-      <div className="section-title">Create a scheduled task</div>
+      <div className="section-title">Create a task</div>
       <div className="task-intro">
-        Every task is now created as a scheduled task. By default it runs once immediately; if you set an interval,
-        budget and end date stay in sync so you can drive the schedule from either side.
+        A task with no interval is created and assigned immediately. Set an interval when the task must run at least
+        twice; budget and end date stay in sync so you can drive the schedule from either side.
       </div>
 
       <div className="task-toolbar task-toolbar-grid">
@@ -1850,8 +1865,8 @@ export default function TaskRunner({
             placeholder="-"
           />
           <small>
-            Leave empty for a one-shot run. If set, the minimum supported interval is 5 minutes and budget/end stay
-            synchronized.
+            Leave empty for a direct one-shot run. If set, the minimum supported interval is 5 minutes and budget/end
+            stay synchronized.
           </small>
         </label>
 
@@ -1870,8 +1885,12 @@ export default function TaskRunner({
             }}
           />
           <small>
-            Cost per run:{" "}
-            <span className="mono">{budgetQuote ? `${budgetQuote.requiredPerRunIotaText} IOTA` : "-"}</span>{" "}
+            {recurringIntervalMinutes == null ? "Direct cost" : "Cost per run"}:{" "}
+            <span className="mono">
+              {budgetQuote
+                ? `${recurringIntervalMinutes == null ? budgetQuote.requiredPaymentIotaText : budgetQuote.requiredPerRunIotaText} IOTA`
+                : "-"}
+            </span>{" "}
             <span className="summary-hint">(scaled by requested nodes)</span>
             {schedulePreview.possibleRuns != null ? (
               <>
@@ -1895,7 +1914,7 @@ export default function TaskRunner({
           onClick={() => void onSubmit()}
           disabled={busy || !parsedTask || !currentAccount}
         >
-          {busy ? "Opening wallet..." : "Sign and create scheduled task"}
+          {busy ? "Opening wallet..." : "Sign and create task"}
         </button>
         {!parsedTask ? <span className="error-inline">Invalid JSON</span> : null}
       </div>
@@ -1918,29 +1937,35 @@ export default function TaskRunner({
               <div className="summary-hint mono full-value">{taskScheduleResult.digest || "-"}</div>
             </div>
             <div className="task-summary-card">
-              <div className="summary-label">Schedule</div>
+              <div className="summary-label">{taskScheduleResult.prepared.executionMode === "direct" ? "Mode" : "Schedule"}</div>
               <div className="summary-value">
-                {Number(taskScheduleResult.prepared.schedule.endScheduleMs) ===
-                Number(taskScheduleResult.prepared.schedule.startScheduleMs)
+                {taskScheduleResult.prepared.executionMode === "direct"
+                  ? "direct one-shot"
+                  : Number(taskScheduleResult.prepared.schedule.endScheduleMs) ===
+                    Number(taskScheduleResult.prepared.schedule.startScheduleMs)
                   ? "one run"
                   : `every ${Math.max(1, Math.floor(Number(taskScheduleResult.prepared.schedule.intervalMs) / 60000))} min`}
               </div>
               <div className="summary-hint">
-                Budget: <span className="mono">{taskScheduleResult.prepared.initialFunds}</span> nano-IOTA
+                Funds: <span className="mono">{taskScheduleResult.prepared.initialFunds}</span> nano-IOTA
               </div>
             </div>
-            <button
-              type="button"
-              className="task-summary-card task-summary-card-button task-summary-card-button-primary"
-              onClick={onOpenScheduledTasks}
-            >
-              <span className="task-summary-card-button-text">Go to schedule list</span>
-            </button>
+            {onOpenScheduledTasks ? (
+              <button
+                type="button"
+                className="task-summary-card task-summary-card-button task-summary-card-button-primary"
+                onClick={onOpenScheduledTasks}
+              >
+                <span className="task-summary-card-button-text">Go to task list</span>
+              </button>
+            ) : null}
           </div>
 
           <div className="template-details-card">
             <div className="template-details-head">
-              <div className="template-details-title">Task schedule created</div>
+              <div className="template-details-title">
+                {taskScheduleResult.prepared.executionMode === "direct" ? "Direct task submitted" : "Task schedule created"}
+              </div>
               <span className="template-status-badge is-on">active</span>
             </div>
             <div className="template-details-grid">
@@ -1951,8 +1976,14 @@ export default function TaskRunner({
                 </div>
               </div>
               <div className="template-kv-item">
-                <div className="template-kv-label">Required per run</div>
-                <div className="template-kv-value mono">{taskScheduleResult.prepared.requiredPerRun}</div>
+                <div className="template-kv-label">
+                  {taskScheduleResult.prepared.executionMode === "direct" ? "Required payment" : "Required per run"}
+                </div>
+                <div className="template-kv-value mono">
+                  {taskScheduleResult.prepared.executionMode === "direct"
+                    ? taskScheduleResult.prepared.requiredPayment
+                    : taskScheduleResult.prepared.requiredPerRun}
+                </div>
               </div>
               <div className="template-kv-item">
                 <div className="template-kv-label">Start</div>

@@ -35,7 +35,22 @@ For `STORAGE` tasks it also expects:
 - `source.url`
 - optional `declared_download_bytes`
 
-If `declared_download_bytes` is omitted for `STORAGE`, the client probes the source URL and computes it before calling `create_task`.
+If `declared_download_bytes` is omitted for `STORAGE`, the client probes the source URL and computes it before submitting the task.
+
+## Direct one-shot vs scheduled runs
+
+The default client create command submits a one-shot task through:
+
+```move
+oracle_tasks::create_and_submit_direct_task
+```
+
+This creates the task, assigns registered nodes immediately, and emits the first run without adding the task to the scheduler registry.
+
+The wallet/webview schedule preparation chooses between the two Move entries automatically:
+
+- no interval, or an interval/end pair that only represents one run: use `create_and_submit_direct_task`;
+- interval with at least two effective runs: use `create_task` so task `0` can schedule each run.
 
 ## Notes for the current Move version
 

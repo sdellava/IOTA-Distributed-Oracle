@@ -196,6 +196,10 @@ function displayStatusLabel(item: TaskScheduleItem): string {
   return item.statusLabel;
 }
 
+function isScheduledItem(item: TaskScheduleItem): boolean {
+  return Number(item.intervalMs || "0") > 0 || Number(item.nextRunMs || "0") > 0;
+}
+
 function taskItemFromObject(taskId: string, object: any): TaskScheduleItem | null {
   const fields = extractFields(object?.data?.content) ?? extractFields(object?.data) ?? null;
   if (!fields) return null;
@@ -568,10 +572,10 @@ export default function TaskSchedulesPage({
       </section>
 
       <section className="card card-spaced">
-        <div className="section-title">Task schedules</div>
+        <div className="section-title">Task list</div>
         {currentAccount && canManageAnyTask ? (
           <div className="summary-hint scheduled-actions-hint">
-            Controls are shown when the connected wallet is the task owner or holds the oracle controller cap.
+            Scheduler controls are shown for scheduled tasks when the connected wallet is the task owner or holds the oracle controller cap.
           </div>
         ) : null}
         {currentAccount ? (
@@ -586,9 +590,9 @@ export default function TaskSchedulesPage({
           </div>
         ) : null}
         {loading ? (
-          <div className="empty">Loading task schedules...</div>
+          <div className="empty">Loading task list...</div>
         ) : !items.length ? (
-          <div className="empty">{showOnlyMine ? "No tasks found for the connected wallet." : "No task schedules found."}</div>
+          <div className="empty">{showOnlyMine ? "No tasks found for the connected wallet." : "No tasks found."}</div>
         ) : (
           <div className="table-wrap">
             <table className="responsive-table">
@@ -610,6 +614,7 @@ export default function TaskSchedulesPage({
                 {items.map((item) => {
                   const isOwner = connectedAddress && normalizeAddress(item.creator) === connectedAddress;
                   const canShowActions = Boolean(currentAccount && (hasControllerCap || isOwner));
+                  const isScheduled = isScheduledItem(item);
                   const isTerminal = hasTerminalScheduleStatus(item);
                   const isActive = item.statusLabel.toUpperCase() === "ACTIVE";
                   const isEnded = item.statusLabel.toUpperCase() === "ENDED";
@@ -674,7 +679,7 @@ export default function TaskSchedulesPage({
                         {shortAddress(item.lastSchedulerNode)}
                       </td>
                       <td data-label="Actions">
-                        {canShowActions ? (
+                        {canShowActions && isScheduled ? (
                           <div
                             className="scheduled-actions"
                             onClick={(event) => {

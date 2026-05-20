@@ -188,7 +188,7 @@ async function listTaskObjectIds(
       if (!cursor || ids.length >= TASK_OBJECT_DISCOVERY_MAX) break;
     }
   } catch (e: any) {
-    warnings.push(`Failed to discover non-live task schedules: ${String(e?.message ?? e)}`);
+    warnings.push(`Failed to discover task objects: ${String(e?.message ?? e)}`);
   }
 
   return ids;
