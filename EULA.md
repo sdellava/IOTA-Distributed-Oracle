@@ -192,8 +192,6 @@ To the fullest extent permitted by applicable law, the total aggregate liability
 
 In no event shall any party be liable for any indirect, incidental, special, consequential, or punitive damages, including (without limitation) loss of profits, loss of data, loss of business opportunities, or interruption of business, even if advised of the possibility of such damages.
 
-This limitation does not apply to liability that cannot be excluded or limited under mandatory provisions of Italian law (such as liability for fraud or gross negligence causing personal injury or death).
-
 ## 17. Indemnification
 
 The User agrees to indemnify, defend, and hold harmless the System operator, participating nodes, supervisor, developers, and their respective officers, directors, employees, agents, and affiliates from and against any and all claims, damages, losses, liabilities, costs, and expenses (including reasonable legal fees) arising out of or in connection with:
