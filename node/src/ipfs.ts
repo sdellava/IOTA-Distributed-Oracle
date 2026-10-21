@@ -96,6 +96,7 @@ export async function uploadBytesToIpfs(args: {
   url.searchParams.set("quieter", "true");
 
   const res = await fetch(url, {
+    redirect: "error",
     method: "POST",
     headers: buildHeaders(cfg),
     body: form,
@@ -164,6 +165,7 @@ export async function pinCidToIpfs(args: {
   url.searchParams.set("recursive", "true");
 
   const res = await fetch(url, {
+    redirect: "error",
     method: "POST",
     headers: buildHeaders(cfg),
   });
@@ -194,6 +196,7 @@ export async function deleteCidFromIpfs(args: {
   url.searchParams.set("recursive", "true");
 
   const res = await fetch(url, {
+    redirect: "error",
     method: "POST",
     headers: buildHeaders(cfg),
   });
@@ -212,7 +215,7 @@ export async function deleteCidFromIpfs(args: {
     const gcUrl = new URL(`${cfg.apiUrl.replace(/\/$/, "")}/api/v0/repo/gc`);
     gcUrl.searchParams.set("stream-errors", "true");
     try {
-      await fetch(gcUrl, { method: "POST", headers: buildHeaders(cfg) });
+      await fetch(gcUrl, { redirect: "error", method: "POST", headers: buildHeaders(cfg) });
     } catch {
       // best effort
     }

@@ -146,23 +146,6 @@ function extractResponseApiText(payload: any): string {
   throw new Error(`Unsupported Responses payload: ${JSON.stringify(payload).slice(0, 400)}`);
 }
 
-function looksLikeUrlDownloadTimeout(rawBody: string): boolean {
-  const t = String(rawBody ?? "").toLowerCase();
-  return t.includes("timeout while downloading") && t.includes('"param"') && t.includes("url");
-}
-
-function shouldRetryWithFileData(status: number, rawBody: string): boolean {
-  if (status !== 400) return false;
-  const t = String(rawBody ?? "").toLowerCase();
-  return (
-    looksLikeUrlDownloadTimeout(rawBody) ||
-    t.includes("unsupported_file") ||
-    t.includes("file type you uploaded is not supported") ||
-    (t.includes("error while downloading") && t.includes('"param"') && t.includes("url")) ||
-    (t.includes("invalid_value") && t.includes('"param"') && t.includes("url"))
-  );
-}
-
 function filenameFromUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -231,6 +214,7 @@ export async function callLlmJson(opts: {
       const res = await fetch(apiUrl, {
         method: "POST",
         headers,
+        redirect: "error",
         body: JSON.stringify(body),
         signal: ac.signal,
       });
@@ -301,7 +285,7 @@ export async function callLlmJsonWithPdfUrl(opts: {
   if (apiKey && !headers.Authorization) headers.Authorization = `Bearer ${apiKey}`;
 
   const plugins = parseLlmPlugins();
-  const buildBody = (model: string, fileInput: { type: "input_file"; file_url?: string; file_data?: string; filename?: string }) => {
+  const buildBody = (model: string, fileInput: { type: "input_file"; file_data: string; filename: string }) => {
     const b: Record<string, any> = {
       model,
       temperature,
@@ -338,6 +322,15 @@ export async function callLlmJsonWithPdfUrl(opts: {
     return b;
   };
 
+  // Download once under the node's SSRF policy, including redirects and DNS pinning.
+  // Do not delegate arbitrary task URLs to a provider on a potentially private network.
+  const fetched = await httpFetchBytes({ url: opts.pdfUrl, timeoutMs: 30_000, maxBytes: 25_000_000 });
+  const fileInput = {
+    type: "input_file" as const,
+    filename: filenameFromUrl(opts.pdfUrl),
+    file_data: `data:application/pdf;base64,${fetched.bytes.toString("base64")}`,
+  };
+
   let lastError: Error | undefined;
   for (let i = 0; i < models.length; i++) {
     const model = models[i];
@@ -346,37 +339,14 @@ export async function callLlmJsonWithPdfUrl(opts: {
     const t = setTimeout(() => ac.abort(), timeoutMs);
 
     try {
-      let res = await fetch(apiUrl, {
+      const res = await fetch(apiUrl, {
         method: "POST",
         headers,
-        body: JSON.stringify(buildBody(model, { type: "input_file", file_url: opts.pdfUrl })),
+        redirect: "error",
+        body: JSON.stringify(buildBody(model, fileInput)),
         signal: ac.signal,
       });
-      let raw = await res.text();
-
-      // Fallback: if the provider can't download the URL, send the PDF as base64 file_data.
-      if (!res.ok && shouldRetryWithFileData(res.status, raw)) {
-        const fetched = await httpFetchBytes({
-          url: opts.pdfUrl,
-          method: "GET",
-          timeoutMs: Math.max(timeoutMs, 30_000),
-          maxBytes: 25_000_000,
-        });
-
-        res = await fetch(apiUrl, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(
-            buildBody(model, {
-              type: "input_file",
-              filename: filenameFromUrl(opts.pdfUrl),
-              file_data: `data:application/pdf;base64,${fetched.bytes.toString("base64")}`,
-            }),
-          ),
-          signal: ac.signal,
-        });
-        raw = await res.text();
-      }
+      const raw = await res.text();
 
       if (!res.ok) {
         if (isRetryableError(res.status, raw) && !isLastModel) {

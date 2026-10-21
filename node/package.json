@@ -9,7 +9,8 @@
     "daemon": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "cli": "tsx src/cli.ts",
-    "test": "tsx src/testTask.ts"
+    "test": "tsx src/testTask.ts",
+    "test:security": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "zod": "^3.23.8",

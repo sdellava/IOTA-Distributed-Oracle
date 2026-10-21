@@ -13,11 +13,13 @@ services:
     environment:
       NODE_ID: "1"
       NODE_OPTIONS: --dns-result-order=ipv4first
+      MONITOR_HOST: "0.0.0.0"
+      MONITOR_PORT: "9080"
     dns:
       - 1.1.1.1
       - 8.8.8.8
     ports:
-      - "9080:9080"
+      - "127.0.0.1:9080:9080"
     command: ["node", "--import", "tsx", "src/index.ts", "--node", "1"]
     volumes:
       - ./keys:/app/keys
@@ -36,11 +38,13 @@ services:
     environment:
       NODE_ID: "2"
       NODE_OPTIONS: --dns-result-order=ipv4first
+      MONITOR_HOST: "0.0.0.0"
+      MONITOR_PORT: "9080"
     dns:
       - 1.1.1.1
       - 8.8.8.8
     ports:
-      - "9081:9080"
+      - "127.0.0.1:9081:9080"
     command: ["node", "--import", "tsx", "src/index.ts", "--node", "2"]
     volumes:
       - ./keys:/app/keys
@@ -59,11 +63,13 @@ services:
     environment:
       NODE_ID: "3"
       NODE_OPTIONS: --dns-result-order=ipv4first
+      MONITOR_HOST: "0.0.0.0"
+      MONITOR_PORT: "9080"
     dns:
       - 1.1.1.1
       - 8.8.8.8
     ports:
-      - "9082:9080"
+      - "127.0.0.1:9082:9080"
     command: ["node", "--import", "tsx", "src/index.ts", "--node", "3"]
     volumes:
       - ./keys:/app/keys

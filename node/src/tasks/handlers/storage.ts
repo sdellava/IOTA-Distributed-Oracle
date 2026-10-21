@@ -4,13 +4,12 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 
-import { Agent } from "undici";
+import { httpFetchBytes } from "../../http";
 
 import { uploadBytesToIpfs, getIpfsConfig, pinCidToIpfs } from "../../ipfs";
 import type { TaskHandler } from "../types";
 import { normalizeJsonCanonical } from "../utils/json";
 
-const ipv4Agent = new Agent({ connect: { family: 4 } as any });
 
 function pickString(values: unknown[]): string | null {
   for (const v of values) {
@@ -129,87 +128,16 @@ function buildBrowserLikeHeaders(url: string, extra: Record<string, string> = {}
   };
 }
 
-async function readErrorSnippet(res: Response): Promise<string> {
-  try {
-    const text = (await res.text()).replace(/\s+/g, " ").trim();
-    return text.slice(0, 300);
-  } catch {
-    return "";
-  }
-}
-
 async function fetchUrlBytes(
   url: string,
   headers: Record<string, string>,
   timeoutMs: number,
   maxBytes: number,
 ): Promise<{ bytes: Buffer; mimeType?: string | null }> {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), timeoutMs);
-
-  try {
-    const customHeaders = normalizeHeaders(headers);
-    const browserHeaders = buildBrowserLikeHeaders(url, customHeaders);
-
-    const attempts: Array<{
-      name: string;
-      headers: Record<string, string>;
-      dispatcher?: any;
-    }> = [
-      { name: "custom", headers: customHeaders },
-      { name: "custom-ipv4", headers: customHeaders, dispatcher: ipv4Agent },
-      { name: "browser-like", headers: browserHeaders },
-      { name: "browser-like-ipv4", headers: browserHeaders, dispatcher: ipv4Agent },
-    ];
-
-    let lastError: Error | null = null;
-
-    for (const attempt of attempts) {
-      try {
-        const res = await fetch(url, {
-          method: "GET",
-          headers: attempt.headers,
-          redirect: "follow",
-          signal: ac.signal,
-          dispatcher: attempt.dispatcher,
-        } as any);
-
-        if (!res.ok) {
-          const snippet = await readErrorSnippet(res);
-          lastError = new Error(
-            `HTTP ${res.status} ${res.statusText} [${attempt.name}]${snippet ? ` - ${snippet}` : ""}`,
-          );
-          continue;
-        }
-
-        const contentLengthHeader = res.headers.get("content-length");
-        if (contentLengthHeader) {
-          const contentLength = Number(contentLengthHeader);
-          if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-            throw new Error(`STORAGE download too large: ${contentLength} bytes > limit ${maxBytes}`);
-          }
-        }
-
-        const ab = await res.arrayBuffer();
-        const bytes = Buffer.from(ab);
-
-        if (bytes.length > maxBytes) {
-          throw new Error(`STORAGE download too large: ${bytes.length} bytes > limit ${maxBytes}`);
-        }
-
-        return {
-          bytes,
-          mimeType: res.headers.get("content-type"),
-        };
-      } catch (e: any) {
-        lastError = new Error(`${attempt.name}: ${String(e?.message ?? e)}`);
-      }
-    }
-
-    throw lastError ?? new Error("STORAGE download failed");
-  } finally {
-    clearTimeout(t);
-  }
+  const result = await httpFetchBytes({
+    url, headers: buildBrowserLikeHeaders(url, normalizeHeaders(headers)), timeoutMs, maxBytes,
+  });
+  return { bytes: result.bytes, mimeType: result.contentType };
 }
 
 async function resolvePayloadContent(payload: any): Promise<ResolvedContent> {

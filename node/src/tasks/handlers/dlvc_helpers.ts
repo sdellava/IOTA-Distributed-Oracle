@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+import { httpFetchText } from "../../http";
+import { TaskHttpError } from "../../taskHttp";
+
 import { getFullnodeUrl, IotaClient } from "@iota/iota-sdk/client";
 import {
   DomainLinkageConfiguration,
@@ -136,40 +139,9 @@ export function getLinkedDomainDetails(didDocument: any): LinkedDomainDetails | 
 }
 
 async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any> {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json,*/*" },
-      signal: ac.signal,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-    return res.json();
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-async function fetchViaProxy(did: string, network: "mainnet" | "testnet", timeoutMs: number): Promise<any> {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    const res = await fetch("https://api.objectid.io/api/dlvc-proxy", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json,*/*",
-      },
-      body: JSON.stringify({ did, network }),
-      signal: ac.signal,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-    const data = await res.json();
-    return data?.didConfiguration;
-  } finally {
-    clearTimeout(t);
-  }
+  return JSON.parse(await httpFetchText({
+    url, timeoutMs, headers: { Accept: "application/json,*/*" },
+  }));
 }
 
 function looksLikeJwt(token: unknown): boolean {
@@ -184,12 +156,9 @@ export async function validateDlvcAndExtractDomain(input: DidResolution, didDocu
   try {
     const configUrl = `${linked.linkedDomainOrigin}.well-known/did-configuration.json?ts=${Date.now()}`;
     configurationJson = await fetchJsonWithTimeout(configUrl, 12_000);
-  } catch {
-    try {
-      configurationJson = await fetchViaProxy(input.didString, input.network, 12_000);
-    } catch {
-      return null;
-    }
+  } catch (error) {
+    if (error instanceof TaskHttpError) throw error;
+    return null;
   }
 
   const linkedDids = configurationJson?.linked_dids;
