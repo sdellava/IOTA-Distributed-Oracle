@@ -55,7 +55,7 @@ export function createWalletAuth(options) {
             throw new Error("ORIGIN_FORBIDDEN");
         return { audience: service, origin };
     }
-    function fail(res, status, error) { res.status(status).json({ error }); }
+    function fail(res, status, error) { res.locals.auditCode = error; res.status(status).json({ error }); }
     function take(key, limit) {
         prune();
         let counter = counters.get(key);
@@ -170,6 +170,7 @@ export function createWalletAuth(options) {
                 }
                 const token = opaque();
                 const expiresAt = now() + sessionTtl;
+                res.locals.auditIdentity = { wallet: challenge.address, network: challenge.network };
                 sessions.set(digest(token), { address: challenge.address, network: challenge.network, ...ctx, expiresAt });
                 res.json({ token, tokenType: "Bearer", address: challenge.address, network: challenge.network, expiresAt });
             }
@@ -202,6 +203,7 @@ export function createWalletAuth(options) {
                     fail(res, 401, "AUTHENTICATION_REQUIRED");
                     return;
                 }
+                res.locals.auditIdentity = { wallet: session.address, network: session.network };
                 if (req.body?.network !== session.network) {
                     fail(res, 403, "SESSION_NETWORK_MISMATCH");
                     return;

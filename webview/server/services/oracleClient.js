@@ -274,8 +274,8 @@ export async function prepareOracleTaskForWallet(task, sender, network) {
     try {
         const result = await runChildCommand(() => spawnPrepareWalletTask(taskFilePath, normalizedSender, network));
         if (result.exitCode !== 0) {
-            console.error("[wallet preparation]", result.stderr || result.stdout);
             const code = (result.stderr + result.stdout).match(/TASK_[A-Z_0-9]+/)?.[0];
+            console.warn(JSON.stringify({ event: "preparation_failed", code: code || "PREPARATION_FAILED" }));
             throw new Error(code || "Wallet preparation failed. Check task parameters, wallet balance and network availability.");
         }
         const parsed = extractJsonFromStdout(result.stdout);
@@ -314,8 +314,8 @@ export async function prepareOracleTaskScheduleForWallet(task, schedule, sender,
     try {
         const result = await runChildCommand(() => spawnPrepareTaskScheduleWalletTask(taskFilePath, scheduleFilePath, normalizedSender, network));
         if (result.exitCode !== 0) {
-            console.error("[wallet preparation]", result.stderr || result.stdout);
             const code = (result.stderr + result.stdout).match(/TASK_[A-Z_0-9]+/)?.[0];
+            console.warn(JSON.stringify({ event: "preparation_failed", code: code || "PREPARATION_FAILED" }));
             throw new Error(code || "Wallet preparation failed. Check task parameters, wallet balance and network availability.");
         }
         const parsed = extractJsonFromStdout(result.stdout);
@@ -351,8 +351,8 @@ export async function prepareScheduledTaskActionForWallet(action, sender, networ
     try {
         const result = await runChildCommand(() => spawnPrepareScheduledTaskActionWalletTask(actionFilePath, normalizedSender, network));
         if (result.exitCode !== 0) {
-            console.error("[wallet preparation]", result.stderr || result.stdout);
             const code = (result.stderr + result.stdout).match(/TASK_[A-Z_0-9]+/)?.[0];
+            console.warn(JSON.stringify({ event: "preparation_failed", code: code || "PREPARATION_FAILED" }));
             throw new Error(code || "Wallet preparation failed. Check task parameters, wallet balance and network availability.");
         }
         const parsed = extractJsonFromStdout(result.stdout);

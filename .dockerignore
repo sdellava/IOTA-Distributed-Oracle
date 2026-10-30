@@ -12,3 +12,4 @@
 **/keys
 **/*.iotaprivkey
 **/*.key
+**/logs

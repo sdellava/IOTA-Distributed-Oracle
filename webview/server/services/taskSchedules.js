@@ -1,3 +1,4 @@
+import { readClient, boundedFetch } from "../upstream.js";
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 import { IotaClient } from "@iota/iota-sdk/client";
@@ -96,7 +97,7 @@ export async function getTaskSchedules(network) {
         warnings.push("Missing ORACLE_TASK_REGISTRY_ID for active network.");
     if (!schedulerQueueId)
         warnings.push("Missing ORACLE_TASK_SCHEDULER_QUEUE_ID for active network.");
-    const client = new IotaClient({ url: runtime.rpcUrl });
+    const client = readClient(runtime.rpcUrl);
     let queue = null;
     if (schedulerQueueId) {
         try {

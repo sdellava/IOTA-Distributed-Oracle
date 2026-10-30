@@ -346,8 +346,8 @@ export async function prepareOracleTaskForWallet(task: unknown, sender: string, 
     const result = await runChildCommand(() => spawnPrepareWalletTask(taskFilePath, normalizedSender, network));
 
     if (result.exitCode !== 0) {
-      console.error("[wallet preparation]", result.stderr || result.stdout);
       const code = (result.stderr + result.stdout).match(/TASK_[A-Z_0-9]+/)?.[0];
+      console.warn(JSON.stringify({ event: "preparation_failed", code: code || "PREPARATION_FAILED" }));
       throw new Error(code || "Wallet preparation failed. Check task parameters, wallet balance and network availability.");
     }
 
@@ -401,8 +401,8 @@ export async function prepareOracleTaskScheduleForWallet(
     );
 
     if (result.exitCode !== 0) {
-      console.error("[wallet preparation]", result.stderr || result.stdout);
       const code = (result.stderr + result.stdout).match(/TASK_[A-Z_0-9]+/)?.[0];
+      console.warn(JSON.stringify({ event: "preparation_failed", code: code || "PREPARATION_FAILED" }));
       throw new Error(code || "Wallet preparation failed. Check task parameters, wallet balance and network availability.");
     }
 
@@ -452,8 +452,8 @@ export async function prepareScheduledTaskActionForWallet(
     );
 
     if (result.exitCode !== 0) {
-      console.error("[wallet preparation]", result.stderr || result.stdout);
       const code = (result.stderr + result.stdout).match(/TASK_[A-Z_0-9]+/)?.[0];
+      console.warn(JSON.stringify({ event: "preparation_failed", code: code || "PREPARATION_FAILED" }));
       throw new Error(code || "Wallet preparation failed. Check task parameters, wallet balance and network availability.");
     }
 

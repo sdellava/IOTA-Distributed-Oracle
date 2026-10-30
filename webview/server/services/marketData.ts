@@ -1,3 +1,4 @@
+import { readClient, boundedFetch } from "../upstream.js";
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
@@ -66,13 +67,13 @@ function extractUsdPriceFromPayload(payload: unknown): number | null {
 
 async function fetchIotaPriceFromCoinMarketCap(ttlMs: number): Promise<IotaMarketPrice> {
   const [priceResponse, fxResponse] = await Promise.allSettled([
-    fetch(CMC_PUBLIC_QUOTE_URL, {
+    boundedFetch(CMC_PUBLIC_QUOTE_URL, {
       method: "GET",
       headers: {
         Accept: "application/json",
       },
     }),
-    fetch(USD_EUR_RATE_URL, {
+    boundedFetch(USD_EUR_RATE_URL, {
       method: "GET",
       headers: {
         Accept: "application/json",

@@ -3,6 +3,8 @@
 
 import express from "express";
 import { createWalletAuth } from "./walletAuth.js";
+import { createServiceLimits } from "./serviceLimits.js";
+import { readClient, boundedFetch } from "./upstream.js";
 import fs from "node:fs";
 import path from "node:path";
 import { IotaClient } from "@iota/iota-sdk/client";
@@ -44,13 +46,16 @@ const walletAuth = createWalletAuth({ networks: getSupportedNetworks(),
   publicOrigin: process.env.WEBVIEW_PUBLIC_ORIGIN?.trim() || undefined,
   allowedOrigins: (process.env.WEBVIEW_ALLOWED_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean),
 });
+const serviceLimits = createServiceLimits();
+app.use(serviceLimits.middleware);
 app.use(walletAuth.perimeter);
 app.use(express.json({ limit: "2mb" }));
 walletAuth.install(app);
 
 function sendApiError(res: express.Response, status: number, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  res.status(status).json({ error: message });
+  const safe = status >= 500 && !/^(TASK_[A-Z_0-9]+|UPSTREAM_[A-Z_0-9]+)$/.test(message) ? "REQUEST_FAILED" : message;
+  res.status(message === "UPSTREAM_CAPACITY" ? 503 : status).json({ error: safe });
 }
 
 function asRecord(value: unknown): Record<string, any> | null {
@@ -253,7 +258,7 @@ async function fetchLiveEula(): Promise<string> {
     headers.Authorization = `Bearer ${config.eulaSourceToken}`;
   }
 
-  const response = await fetch(config.eulaSourceUrl, {
+  const response = await boundedFetch(config.eulaSourceUrl, {
     headers,
     signal: AbortSignal.timeout(EULA_FETCH_TIMEOUT_MS),
   });
@@ -546,7 +551,7 @@ function nestedTextArray(value: any): string[] {
 
 async function fetchTaskSnapshot(taskId: string, network?: OracleNetwork) {
   const runtime = getRuntimeConfig(network);
-  const client = new IotaClient({ url: runtime.rpcUrl });
+  const client = readClient(runtime.rpcUrl);
 
   const response = await client.getObject({
     id: taskId,
@@ -653,11 +658,11 @@ async function fetchTaskSnapshot(taskId: string, network?: OracleNetwork) {
   };
 }
 
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", serviceLimits.read((_req, res) => {
   res.json({ ok: true, service: "iota_oracle_webview", time: new Date().toISOString() });
-});
+}));
 
-app.get("/api/legal/eula", async (_req, res) => {
+app.get("/api/legal/eula", serviceLimits.read(async (_req, res) => {
   try {
     const result = await loadEulaMarkdown();
     res.setHeader("Cache-Control", "no-store");
@@ -666,9 +671,9 @@ app.get("/api/legal/eula", async (_req, res) => {
   } catch (error) {
     sendApiError(res, 500, error);
   }
-});
+}));
 
-app.get("/api/status", async (req, res) => {
+app.get("/api/status", serviceLimits.read(async (req, res) => {
   try {
     const network = typeof req.query.network === "string" ? req.query.network : undefined;
     const status = await getOracleStatus(network as OracleNetwork | undefined);
@@ -676,9 +681,9 @@ app.get("/api/status", async (req, res) => {
   } catch (error) {
     sendApiError(res, 500, error);
   }
-});
+}));
 
-app.get("/api/task-schedules", async (req, res) => {
+app.get("/api/task-schedules", serviceLimits.read(async (req, res) => {
   try {
     const network = typeof req.query.network === "string" ? req.query.network : undefined;
     const data = await getTaskSchedules(network as OracleNetwork | undefined);
@@ -686,9 +691,9 @@ app.get("/api/task-schedules", async (req, res) => {
   } catch (error) {
     sendApiError(res, 500, error);
   }
-});
+}));
 
-app.get("/api/network", (req, res) => {
+app.get("/api/network", serviceLimits.read((req, res) => {
   const requested = typeof req.query.network === "string" ? req.query.network : undefined;
   const runtime = getRuntimeConfig(requested as OracleNetwork | undefined);
   res.json({
@@ -700,7 +705,7 @@ app.get("/api/network", (req, res) => {
     systemPackageId: runtime.oracleSystemPackageId || null,
     stateId: runtime.oracleStateId || null,
   });
-});
+}));
 
 app.post("/api/network", walletAuth.operation((req, res) => {
   try {
@@ -726,34 +731,34 @@ app.post("/api/network", walletAuth.operation((req, res) => {
   }
 }));
 
-app.get("/api/examples", async (_req, res) => {
+app.get("/api/examples", serviceLimits.read(async (_req, res) => {
   try {
     const items = await listExampleTasks();
     res.json(items);
   } catch (error) {
     sendApiError(res, 500, error);
   }
-});
+}));
 
-app.get("/api/examples/:name", async (req, res) => {
+app.get("/api/examples/:name", serviceLimits.read(async (req, res) => {
   try {
     const item = await readExampleTask(req.params.name);
     res.json(item);
   } catch (error) {
     sendApiError(res, 404, error);
   }
-});
+}));
 
-app.get("/api/market/iota-price", async (_req, res) => {
+app.get("/api/market/iota-price", serviceLimits.read(async (_req, res) => {
   try {
     const price = await getIotaMarketPrice();
     res.json(price);
   } catch (error) {
     sendApiError(res, 502, error);
   }
-});
+}));
 
-app.get("/api/task/:taskId", async (req, res) => {
+app.get("/api/task/:taskId", serviceLimits.read(async (req, res) => {
   try {
     const taskId = String(req.params.taskId ?? "").trim();
     const network = typeof req.query.network === "string" ? req.query.network : undefined;
@@ -771,9 +776,9 @@ app.get("/api/task/:taskId", async (req, res) => {
     }
     sendApiError(res, 500, error);
   }
-});
+}));
 
-app.get("/api/task/:taskId/events", async (req, res) => {
+app.get("/api/task/:taskId/events", serviceLimits.read(async (req, res) => {
   try {
     const taskId = String(req.params.taskId ?? "").trim();
     const network = typeof req.query.network === "string" ? req.query.network : undefined;
@@ -795,7 +800,7 @@ app.get("/api/task/:taskId/events", async (req, res) => {
     }
     sendApiError(res, 500, error);
   }
-});
+}));
 
 app.get("/api/task/:taskId/stream", async (req, res) => {
   const taskId = String(req.params.taskId ?? "").trim();
@@ -806,6 +811,7 @@ app.get("/api/task/:taskId/stream", async (req, res) => {
     return;
   }
 
+  res.locals.readOperationStarted = true;
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
@@ -814,46 +820,50 @@ app.get("/api/task/:taskId/stream", async (req, res) => {
   let closed = false;
   let timer: NodeJS.Timeout | null = null;
   let lastSnapshotSignature = "";
+  let inFlight: Promise<void> | undefined;
+  const lifetime = setTimeout(() => res.end(), serviceLimits.streamAgeMs);
+  const startPoll = () => { inFlight = pollSnapshot(); };
 
   const sendEvent = (eventName: string, payload: unknown) => {
-    if (closed) return;
-    res.write(`event: ${eventName}\n`);
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    if (closed || res.writableEnded) return;
+    if (!res.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`)) res.end();
   };
 
   const scheduleNextPoll = () => {
-    if (closed) return;
+    if (closed || res.writableEnded) return;
     timer = setTimeout(() => {
-      void pollSnapshot();
+      startPoll();
     }, TASK_STREAM_POLL_MS);
   };
 
   const pollSnapshot = async () => {
     try {
       const snapshot = await fetchTaskSnapshot(taskId, network as OracleNetwork | undefined);
+      if (closed) return;
       const signature = JSON.stringify(snapshot);
 
       if (signature !== lastSnapshotSignature) {
         lastSnapshotSignature = signature;
         sendEvent("snapshot", snapshot);
       } else {
-        res.write(": keep-alive\n\n");
+        if (!closed && !res.writableEnded && !res.write(": keep-alive\n\n")) res.end();
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      sendEvent("error", { error: message });
+      sendEvent("error", { error: "STREAM_READ_FAILED" });
     } finally {
       scheduleNextPoll();
     }
   };
 
   sendEvent("ready", { ok: true, taskId, network: network ?? getActiveNetwork() });
-  void pollSnapshot();
+  if (!res.writableEnded) { res.write("retry: 5000\n\n"); startPoll(); }
 
-  req.on("close", () => {
+  res.on("close", () => {
     closed = true;
     if (timer) clearTimeout(timer);
-    res.end();
+    clearTimeout(lifetime);
+    if (inFlight) void inFlight.finally(() => res.locals.releaseRead?.());
+    else res.locals.releaseRead?.();
   });
 });
 
@@ -1014,7 +1024,7 @@ app.use(
   }),
 );
 
-app.get("*", (req, res) => {
+app.get("*", serviceLimits.read((req, res) => {
   if (req.path.startsWith("/api/")) {
     res.status(404).json({ error: `API route not found: ${req.path}` });
     return;
@@ -1026,7 +1036,7 @@ app.get("*", (req, res) => {
   }
 
   res.sendFile(indexPath);
-});
+}));
 
 app.listen(config.port, "0.0.0.0", () => {
   const runtime = getRuntimeConfig();

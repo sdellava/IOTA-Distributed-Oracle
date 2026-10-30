@@ -43,6 +43,17 @@ export function parseTaskUrl(value: string): URL {
   if (deniedHosts.some((entry) => normalizedHost === entry || normalizedHost.endsWith(`.${entry}`))) {
     throw new TaskHttpError("TASK_DESTINATION_FORBIDDEN");
   }
+  const allowedHosts = String(process.env.TASK_HTTP_ALLOWED_HOSTS ?? "").split(",")
+    .map(entry => entry.trim().toLowerCase().replace(/\.$/, "")).filter(Boolean);
+  if (allowedHosts.length && !allowedHosts.some(entry => entry.startsWith("*.")
+    ? normalizedHost.endsWith(`.${entry.slice(2)}`) : normalizedHost === entry)) {
+    throw new TaskHttpError("TASK_DESTINATION_FORBIDDEN");
+  }
+  const allowedPorts = String(process.env.TASK_HTTP_ALLOWED_PORTS ?? "").split(",").map(entry => entry.trim()).filter(Boolean);
+  if (allowedPorts.some(entry => !/^\d+$/.test(entry) || Number(entry) < 1 || Number(entry) > 65535)) throw new TaskHttpError("TASK_POLICY_INVALID");
+  if (allowedPorts.length && !allowedPorts.some(entry => Number(entry) === Number(url.port || (url.protocol === "https:" ? 443 : 80)))) {
+    throw new TaskHttpError("TASK_PORT_FORBIDDEN");
+  }
   if (isIP(host) ? !isPublicAddress(host) : (!normalizedHost.includes(".") || /\.(localhost|local|internal|lan|home|test|invalid)$/i.test(normalizedHost))) {
     throw new TaskHttpError("TASK_DESTINATION_FORBIDDEN");
   }

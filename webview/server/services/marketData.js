@@ -1,3 +1,4 @@
+import { readClient, boundedFetch } from "../upstream.js";
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 const CMC_IOTA_SOURCE_URL = "https://coinmarketcap.com/currencies/iota/";
@@ -40,7 +41,7 @@ function extractUsdPriceFromPayload(payload) {
     return null;
 }
 async function fetchIotaPriceFromCoinMarketCap(ttlMs) {
-    const response = await fetch(CMC_PUBLIC_QUOTE_URL, {
+    const response = await boundedFetch(CMC_PUBLIC_QUOTE_URL, {
         method: "GET",
         headers: {
             Accept: "application/json",

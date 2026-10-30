@@ -20,6 +20,12 @@ test("network-scoped public client configuration remains available", () => {
   assert.equal(env.MAINNET_IOTA_SYSTEM_STATE_ID, "0x5");
   assert.equal(env.TESTNET_CLIENT_KEY_FILE, undefined);
 });
+test("Webview task policy wins over client env and remains available to preparations", () => {
+  const env = preparationEnvironment({ TASK_HTTP_ALLOWED_HOSTS: "storage.example.com", TASK_HTTP_ALLOWED_PORTS: "443" },
+    { TASK_HTTP_ALLOWED_HOSTS: "", TASK_HTTP_ALLOWED_PORTS: "80,443" });
+  assert.equal(env.TASK_HTTP_ALLOWED_HOSTS, "storage.example.com");
+  assert.equal(env.TASK_HTTP_ALLOWED_PORTS, "443");
+});
 test("neither checked-in backend representation exposes execute or signing runner", () => {
   for (const ext of ["ts", "js"]) {
     assert.doesNotMatch(fs.readFileSync(new URL(`../server/index.${ext}`, import.meta.url), "utf8"), /app\.post\(["']\/api\/tasks\/execute/);

@@ -108,3 +108,22 @@ test("HEAD network failure still permits a validated GET fallback", async () => 
   assert.equal(await probe(task), 10n);
   assert.equal(calls, 2);
 });
+
+
+test("optional host and port allowlists keep mandatory IP restrictions", async () => {
+  const oldHosts = process.env.TASK_HTTP_ALLOWED_HOSTS;
+  const oldPorts = process.env.TASK_HTTP_ALLOWED_PORTS;
+  process.env.TASK_HTTP_ALLOWED_HOSTS = "example.com,*.storage.example.com,127.0.0.1";
+  process.env.TASK_HTTP_ALLOWED_PORTS = "443";
+  try {
+    const { parseTaskUrl } = await import("../src/taskHttp.js");
+    assert.equal(parseTaskUrl("https://example.com/file").hostname, "example.com");
+    assert.equal(parseTaskUrl("https://one.storage.example.com/file").hostname, "one.storage.example.com");
+    for (const url of ["https://storage.example.com/", "https://evil-example.com/", "https://example.com.evil.com/", "https://elsewhere.com/"]) assert.throws(() => parseTaskUrl(url), /TASK_DESTINATION_FORBIDDEN/);
+    assert.throws(() => parseTaskUrl("http://example.com/"), /TASK_PORT_FORBIDDEN/);
+    assert.throws(() => parseTaskUrl("https://127.0.0.1/"), /TASK_DESTINATION_FORBIDDEN/);
+  } finally {
+    if (oldHosts === undefined) delete process.env.TASK_HTTP_ALLOWED_HOSTS; else process.env.TASK_HTTP_ALLOWED_HOSTS = oldHosts;
+    if (oldPorts === undefined) delete process.env.TASK_HTTP_ALLOWED_PORTS; else process.env.TASK_HTTP_ALLOWED_PORTS = oldPorts;
+  }
+});

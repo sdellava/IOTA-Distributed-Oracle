@@ -1,3 +1,4 @@
+import { readClient, boundedFetch } from "../upstream.js";
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
@@ -168,7 +169,7 @@ export async function prepareNodeManagementForWallet(
   if (!runtime.oracleStateId) throw new Error("ORACLE_STATE_ID is not configured for the selected network.");
   if (!runtime.oracleSystemPackageId) throw new Error("ORACLE_SYSTEM_PACKAGE_ID is not configured for the selected network.");
 
-  const client = new IotaClient({ url: runtime.rpcUrl });
+  const client = readClient(runtime.rpcUrl);
   const normalizedSender = normalizeAddress(sender);
   if (!normalizedSender) throw new Error("Wallet sender address is required.");
 
@@ -258,7 +259,7 @@ export async function prepareProposalApprovalForWallet(
   tx.moveCall({
     target: `${runtime.oracleSystemPackageId}::systemState::approve_task_template_proposal`,
     arguments: [
-      tx.object(await resolveNodeRegistryId(new IotaClient({ url: runtime.rpcUrl }), runtime.oracleStateId)),
+      tx.object(await resolveNodeRegistryId(readClient(runtime.rpcUrl), runtime.oracleStateId)),
       tx.object(runtime.oracleStateId),
       tx.object(runtime.iotaClockObjectId || "0x6"),
       tx.pure.u64(String(proposalId)),
@@ -271,7 +272,7 @@ export async function prepareProposalApprovalForWallet(
     sender: normalizedSender,
     proposalId: String(proposalId),
     templateId: String(templateId),
-    serializedTransaction: await serializeTransactionForWallet(tx, new IotaClient({ url: runtime.rpcUrl })),
+    serializedTransaction: await serializeTransactionForWallet(tx, readClient(runtime.rpcUrl)),
     gasBudget: String(gasBudget()),
     target: `${runtime.oracleSystemPackageId}::systemState::approve_task_template_proposal`,
   };

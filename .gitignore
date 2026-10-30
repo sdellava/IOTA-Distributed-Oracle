@@ -20,3 +20,4 @@ node/0xed4526b7124624d08ca484af220aecfc45e37158734650a1d13f4b93dd1b0728.key
 .codex
 node/.env_devnet_save
 graphify-out
+webview/logs/

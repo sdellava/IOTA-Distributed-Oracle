@@ -1,3 +1,4 @@
+import { readClient, boundedFetch } from "../upstream.js";
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 import { IotaClient } from "@iota/iota-sdk/client";
@@ -368,7 +369,7 @@ async function queryModuleEvents(client, packageId, moduleName, eventFetchLimit)
     return (page.data ?? []).map((event) => normalizeEvent(moduleName, event));
 }
 async function fetchGraphqlPayload(graphqlUrl, query, variables) {
-    const response = await fetch(graphqlUrl, {
+    const response = await boundedFetch(graphqlUrl, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -740,7 +741,7 @@ async function enrichRegisteredNodesWithValidatorInfo(client, nodes, warnings) {
 }
 export async function getOracleStatus(network) {
     const runtime = getRuntimeConfig(network);
-    const client = new IotaClient({ url: runtime.rpcUrl });
+    const client = readClient(runtime.rpcUrl);
     const warnings = [];
     if (!runtime.oracleTasksPackageId) {
         warnings.push("ORACLE_TASKS_PACKAGE_ID is not configured. Dashboard is running in degraded mode.");

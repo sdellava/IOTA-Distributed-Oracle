@@ -1,3 +1,6 @@
+volumes:
+  webview_audit:
+
 secrets:
   webview_env:
     file: .env
@@ -17,6 +20,11 @@ services:
       secrets:
         - webview_env
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     env_file:
       - .env
     environment:
@@ -25,6 +33,8 @@ services:
       ORACLE_CLIENT_DIR: "/workspace/client"
       ORACLE_EXAMPLES_DIR: "/workspace/webview/examples"
     command: ["npm", "run", "start"]
+    volumes:
+      - webview_audit:/workspace/webview/logs
     networks:
       - traefik_proxy
     labels:
