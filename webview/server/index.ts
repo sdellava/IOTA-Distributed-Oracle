@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 import express from "express";
-import cors from "cors";
+import { createWalletAuth } from "./walletAuth.js";
 import fs from "node:fs";
 import path from "node:path";
 import { IotaClient } from "@iota/iota-sdk/client";
@@ -12,11 +12,9 @@ import {
   getActiveNetwork,
   getRuntimeConfig,
   getSupportedNetworks,
-  setActiveNetwork,
   type OracleNetwork,
 } from "./config.js";
 import {
-  executeOracleTask,
   listExampleTasks,
   prepareOracleTaskScheduleForWallet,
   prepareScheduledTaskActionForWallet,
@@ -32,6 +30,9 @@ import { getOracleStatus } from "./services/oracleStatus.js";
 import { getTaskSchedules } from "./services/taskSchedules.js";
 
 const app = express();
+// Only explicit proxy addresses/CIDRs may influence req.ip. Never trust arbitrary X-Forwarded-For.
+const trustedProxies = (process.env.WEBVIEW_TRUSTED_PROXIES ?? "").split(",").map(value => value.trim()).filter(Boolean);
+if (trustedProxies.length) app.set("trust proxy", trustedProxies);
 
 app.use((req, res, next) => {
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -39,8 +40,13 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(cors());
+const walletAuth = createWalletAuth({ networks: getSupportedNetworks(),
+  publicOrigin: process.env.WEBVIEW_PUBLIC_ORIGIN?.trim() || undefined,
+  allowedOrigins: (process.env.WEBVIEW_ALLOWED_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean),
+});
+app.use(walletAuth.perimeter);
 app.use(express.json({ limit: "2mb" }));
+walletAuth.install(app);
 
 function sendApiError(res: express.Response, status: number, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -686,7 +692,7 @@ app.get("/api/network", (req, res) => {
   const requested = typeof req.query.network === "string" ? req.query.network : undefined;
   const runtime = getRuntimeConfig(requested as OracleNetwork | undefined);
   res.json({
-    activeNetwork: requested ? runtime.network : getActiveNetwork(),
+    activeNetwork: runtime.network,
     supportedNetworks: getSupportedNetworks(),
     rpcUrl: runtime.rpcUrl,
     graphqlUrl: runtime.graphqlUrl || null,
@@ -696,14 +702,14 @@ app.get("/api/network", (req, res) => {
   });
 });
 
-app.post("/api/network", (req, res) => {
+app.post("/api/network", walletAuth.operation((req, res) => {
   try {
     const network = String((req.body as any)?.network ?? "").trim();
     if (!network) {
       res.status(400).json({ error: "Body must include network." });
       return;
     }
-    const activeNetwork = setActiveNetwork(network);
+    const activeNetwork = getRuntimeConfig(network as OracleNetwork).network;
     const runtime = getRuntimeConfig(activeNetwork);
     res.json({
       ok: true,
@@ -718,7 +724,7 @@ app.post("/api/network", (req, res) => {
   } catch (error) {
     sendApiError(res, 400, error);
   }
-});
+}));
 
 app.get("/api/examples", async (_req, res) => {
   try {
@@ -851,7 +857,7 @@ app.get("/api/task/:taskId/stream", async (req, res) => {
   });
 });
 
-app.post("/api/tasks/prepare-wallet", async (req, res) => {
+app.post("/api/tasks/prepare-wallet", walletAuth.operation(async (req, res) => {
   try {
     if (typeof req.body !== "object" || req.body === null || !("task" in req.body)) {
       res.status(400).json({ error: 'Body must be { "task": ..., "sender": "0x..." }.' });
@@ -868,15 +874,15 @@ app.post("/api/tasks/prepare-wallet", async (req, res) => {
     const result = await prepareOracleTaskForWallet(
       (req.body as any).task,
       sender,
-      network ? setActiveNetwork(network) : undefined,
+      network ? network as OracleNetwork : undefined,
     );
     res.json(result);
   } catch (error) {
     sendApiError(res, 500, error);
   }
-});
+}));
 
-app.post("/api/tasks/prepare-task-schedule-wallet", async (req, res) => {
+app.post("/api/tasks/prepare-task-schedule-wallet", walletAuth.operation(async (req, res) => {
   try {
     const task = (req.body as any)?.task;
     const schedule = (req.body as any)?.schedule;
@@ -895,9 +901,9 @@ app.post("/api/tasks/prepare-task-schedule-wallet", async (req, res) => {
   } catch (error) {
     sendApiError(res, 400, error);
   }
-});
+}));
 
-app.post("/api/task-schedules/prepare-action-wallet", async (req, res) => {
+app.post("/api/task-schedules/prepare-action-wallet", walletAuth.operation(async (req, res) => {
   try {
     const action = (req.body as any)?.action;
     const sender = String((req.body as any)?.sender ?? "").trim();
@@ -915,9 +921,9 @@ app.post("/api/task-schedules/prepare-action-wallet", async (req, res) => {
   } catch (error) {
     sendApiError(res, 400, error);
   }
-});
+}));
 
-app.post("/api/node-management/prepare-wallet", async (req, res) => {
+app.post("/api/node-management/prepare-wallet", walletAuth.operation(async (req, res) => {
   try {
     const sender = String((req.body as any)?.sender ?? "").trim();
     const network = typeof (req.body as any)?.network === "string" ? (req.body as any).network : undefined;
@@ -941,9 +947,9 @@ app.post("/api/node-management/prepare-wallet", async (req, res) => {
   } catch (error) {
     sendApiError(res, 400, error);
   }
-});
+}));
 
-app.post("/api/node-management/prepare-approve-wallet", async (req, res) => {
+app.post("/api/node-management/prepare-approve-wallet", walletAuth.operation(async (req, res) => {
   try {
     const sender = String((req.body as any)?.sender ?? "").trim();
     const network = typeof (req.body as any)?.network === "string" ? (req.body as any).network : undefined;
@@ -971,22 +977,8 @@ app.post("/api/node-management/prepare-approve-wallet", async (req, res) => {
   } catch (error) {
     sendApiError(res, 400, error);
   }
-});
+}));
 
-app.post("/api/tasks/execute", async (req, res) => {
-  try {
-    if (typeof req.body !== "object" || req.body === null || !("task" in req.body)) {
-      res.status(400).json({ error: 'Body must be { "task": ... }.' });
-      return;
-    }
-
-    const network = typeof (req.body as any).network === "string" ? (req.body as any).network.trim() : "";
-    const result = await executeOracleTask((req.body as any).task, network ? setActiveNetwork(network) : undefined);
-    res.status(result.ok ? 200 : 500).json(result);
-  } catch (error) {
-    sendApiError(res, 500, error);
-  }
-});
 
 const distPath = path.resolve(process.cwd(), "dist");
 const indexPath = path.join(distPath, "index.html");

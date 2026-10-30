@@ -1,9 +1,9 @@
+import { walletPost } from "./walletSession";
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 import type {
   ExampleTask,
-  ExecuteTaskResponse,
   NetworkConfigResponse,
   OracleNetwork,
   OracleStatus,
@@ -37,16 +37,9 @@ export async function fetchNetworkConfig(): Promise<NetworkConfigResponse> {
   return ensureOk<NetworkConfigResponse>(await fetch('/api/network'));
 }
 
+// Network selection is per client; reading configuration never mutates server state.
 export async function updateActiveNetwork(network: OracleNetwork): Promise<NetworkConfigResponse> {
-  return ensureOk<NetworkConfigResponse>(
-    await fetch('/api/network', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ network }),
-    }),
-  );
+  return ensureOk<NetworkConfigResponse>(await fetch(`/api/network?network=${encodeURIComponent(network)}`));
 }
 
 export async function fetchExamples(): Promise<ExampleTask[]> {
@@ -57,17 +50,6 @@ export async function fetchExampleContent(name: string): Promise<unknown> {
   return ensureOk<unknown>(await fetch(`/api/examples/${encodeURIComponent(name)}`));
 }
 
-export async function executeTask(task: unknown): Promise<ExecuteTaskResponse> {
-  return ensureOk<ExecuteTaskResponse>(
-    await fetch('/api/tasks/execute', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ task }),
-    }),
-  );
-}
 
 export async function prepareWalletTask(
   task: unknown,
@@ -75,13 +57,7 @@ export async function prepareWalletTask(
   network: OracleNetwork,
 ): Promise<PreparedWalletTaskResponse> {
   return ensureOk<PreparedWalletTaskResponse>(
-    await fetch('/api/tasks/prepare-wallet', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ task, sender, network }),
-    }),
+    await walletPost('/api/tasks/prepare-wallet', { task, sender, network }),
   );
 }
 
@@ -92,13 +68,7 @@ export async function prepareWalletTaskSchedule(
   network: OracleNetwork,
 ): Promise<PreparedTaskScheduleWalletResponse> {
   return ensureOk<PreparedTaskScheduleWalletResponse>(
-    await fetch('/api/tasks/prepare-task-schedule-wallet', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ task, schedule, sender, network }),
-    }),
+    await walletPost('/api/tasks/prepare-task-schedule-wallet', { task, schedule, sender, network }),
   );
 }
 
@@ -118,13 +88,7 @@ export async function prepareScheduledTaskActionWallet(
   network: OracleNetwork,
 ): Promise<PreparedScheduledTaskActionWalletResponse> {
   return ensureOk<PreparedScheduledTaskActionWalletResponse>(
-    await fetch('/api/task-schedules/prepare-action-wallet', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ action, sender, network }),
-    }),
+    await walletPost('/api/task-schedules/prepare-action-wallet', { action, sender, network }),
   );
 }
 
@@ -134,13 +98,7 @@ export async function prepareNodeManagementWallet(
   network: OracleNetwork,
 ): Promise<PreparedNodeManagementWalletResponse> {
   return ensureOk<PreparedNodeManagementWalletResponse>(
-    await fetch('/api/node-management/prepare-wallet', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ acceptedTemplateIds, sender, network }),
-    }),
+    await walletPost('/api/node-management/prepare-wallet', { acceptedTemplateIds, sender, network }),
   );
 }
 
@@ -151,12 +109,6 @@ export async function prepareProposalApprovalWallet(
   network: OracleNetwork,
 ): Promise<PreparedProposalApprovalWalletResponse> {
   return ensureOk<PreparedProposalApprovalWalletResponse>(
-    await fetch('/api/node-management/prepare-approve-wallet', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ proposalId, templateId, sender, network }),
-    }),
+    await walletPost('/api/node-management/prepare-approve-wallet', { proposalId, templateId, sender, network }),
   );
 }

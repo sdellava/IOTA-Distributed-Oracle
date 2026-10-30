@@ -11,6 +11,7 @@ export type ClientIdentity = {
 };
 
 export function loadOrCreateClientIdentity(): ClientIdentity {
+  if (process.env.ORACLE_PREPARE_ONLY === "1") throw new Error("Signing is disabled in Webview preparation mode.");
   const fp = (process.env.CLIENT_KEY_FILE?.trim() || './keys/oracle_client.iotaprivkey');
   const abs = path.resolve(process.cwd(), fp);
   fs.mkdirSync(path.dirname(abs), { recursive: true });

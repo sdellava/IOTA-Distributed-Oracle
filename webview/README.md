@@ -104,18 +104,30 @@ Backend serves `dist/` and API.
 
 ## Task execution flow
 
-When submitting a task from the web page:
+The backend only prepares unsigned transactions. The connected wallet signs and
+submits them; immediate and scheduled tasks remain supported. The obsolete
+`POST /api/tasks/execute` server-signing route has been removed.
 
-1. backend writes task JSON to a temporary file
-2. backend runs:
+External clients can independently submit tasks using `client/` and their own
+local wallet (`npm run create -- examples/task_weather.json`). The standalone
+client identity must not be installed in the Webview runtime.
 
-```bash
-npm run create -- <temp-task-file>
-```
+No `CLIENT_KEY_FILE`, private key, mnemonic, or wallet key mount is required by
+the Webview. Preparation subprocesses receive only public configuration and
+cannot load or generate a signing identity. Keep EULA_SOURCE_TOKEN, if needed,
+server-side; this repository access token is unrelated to wallet signing.
 
-inside `../iota_oracle_client`, while examples shown in UI are read from local `./examples`.
+Docker builds use `.env.example` for build defaults. Configure deployment via
+runtime environment; the Compose build mounts `.env` as a BuildKit secret to preserve `VITE_*`
+customizations without retaining the source file in image layers. Real `.env` and wallet key files are excluded from the image.
 
-3. UI shows stdout, stderr, and exit code
+## API authentication
+
+Preparation requires a short-lived wallet-signature session in v2.0.7. The UI
+requests a personal-message signature at first preparation and separately asks
+for each transaction signature. Automated clients can sign locally using
+`client`'s `auth:webview` command. Dashboard reads remain public. See
+[protocol, quotas and proxy configuration](../docs/WEBVIEW_API_AUTHENTICATION.md).
 
 ## Files worth touching next
 

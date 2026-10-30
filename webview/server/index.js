@@ -1,22 +1,33 @@
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 import express from "express";
-import cors from "cors";
+import { createWalletAuth } from "./walletAuth.js";
+import fs from "node:fs";
 import path from "node:path";
 import { IotaClient } from "@iota/iota-sdk/client";
-import { config, envDebug, getActiveNetwork, getRuntimeConfig, getSupportedNetworks, setActiveNetwork, } from "./config.js";
-import { executeOracleTask, listExampleTasks, prepareOracleTaskScheduleForWallet, prepareOracleTaskForWallet, readExampleTask, } from "./services/oracleClient.js";
+import { config, envDebug, getActiveNetwork, getRuntimeConfig, getSupportedNetworks, } from "./config.js";
+import { listExampleTasks, prepareOracleTaskScheduleForWallet, prepareScheduledTaskActionForWallet, prepareOracleTaskForWallet, readExampleTask, } from "./services/oracleClient.js";
 import { getIotaMarketPrice } from "./services/marketData.js";
+import { prepareNodeManagementForWallet, prepareProposalApprovalForWallet, } from "./services/nodeManagement.js";
 import { getOracleStatus } from "./services/oracleStatus.js";
 import { getTaskSchedules } from "./services/taskSchedules.js";
 const app = express();
+// Only explicit proxy addresses/CIDRs may influence req.ip. Never trust arbitrary X-Forwarded-For.
+const trustedProxies = (process.env.WEBVIEW_TRUSTED_PROXIES ?? "").split(",").map(value => value.trim()).filter(Boolean);
+if (trustedProxies.length)
+    app.set("trust proxy", trustedProxies);
 app.use((req, res, next) => {
     res.setHeader("X-Frame-Options", "SAMEORIGIN");
     res.setHeader("Content-Security-Policy", "frame-ancestors 'self';");
     next();
 });
-app.use(cors());
+const walletAuth = createWalletAuth({ networks: getSupportedNetworks(),
+    publicOrigin: process.env.WEBVIEW_PUBLIC_ORIGIN?.trim() || undefined,
+    allowedOrigins: (process.env.WEBVIEW_ALLOWED_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean),
+});
+app.use(walletAuth.perimeter);
 app.use(express.json({ limit: "2mb" }));
+walletAuth.install(app);
 function sendApiError(res, status, error) {
     const message = error instanceof Error ? error.message : String(error);
     res.status(status).json({ error: message });
@@ -141,6 +152,57 @@ function unwrapFieldValue(obj) {
             return nested;
     }
     return {};
+}
+const TASK_STREAM_POLL_MS = 4000;
+const EULA_FETCH_TIMEOUT_MS = 5000;
+async function readFirstTextFile(candidates, label) {
+    for (const candidate of candidates) {
+        try {
+            return await fs.promises.readFile(candidate, "utf8");
+        }
+        catch {
+            // Try the next candidate.
+        }
+    }
+    throw new Error(`${label} not found.`);
+}
+function stripOperatorTermsFromBaseEula(markdown) {
+    return markdown.replace(/\n+## 18\. Governing Law and Jurisdiction[\s\S]*$/u, "");
+}
+function joinEulaMarkdown(baseMarkdown, operatorTermsMarkdown) {
+    return `${stripOperatorTermsFromBaseEula(baseMarkdown).trimEnd()}\n\n${operatorTermsMarkdown.trimStart()}`;
+}
+async function readLocalEulaOperatorTerms() {
+    return readFirstTextFile([
+        path.join(process.cwd(), "dist", "EULA_NODE_OPERATOR_TERMS.md"),
+        path.join(process.cwd(), "public", "EULA_NODE_OPERATOR_TERMS.md"),
+    ], "Bundled EULA_NODE_OPERATOR_TERMS.md");
+}
+async function fetchLiveEula() {
+    if (!config.eulaSourceUrl) {
+        throw new Error("EULA_SOURCE_URL is not configured.");
+    }
+    const headers = {
+        Accept: "text/plain, text/markdown, */*",
+    };
+    if (config.eulaSourceToken) {
+        headers.Authorization = `Bearer ${config.eulaSourceToken}`;
+    }
+    const response = await fetch(config.eulaSourceUrl, {
+        headers,
+        signal: AbortSignal.timeout(EULA_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+        throw new Error(`Unable to load live EULA (${response.status})`);
+    }
+    return response.text();
+}
+async function loadEulaMarkdown() {
+    const [baseMarkdown, operatorTermsMarkdown] = await Promise.all([
+        fetchLiveEula(),
+        readLocalEulaOperatorTerms(),
+    ]);
+    return { markdown: joinEulaMarkdown(baseMarkdown, operatorTermsMarkdown), source: "live" };
 }
 async function fetchTaskResults(client, taskId, tasksPackageId) {
     if (!taskId || !tasksPackageId)
@@ -296,14 +358,14 @@ function buildRunHistory(events, results, fields) {
         const timestampMs = numberFromUnknown(evt.timestampMs);
         const typeName = eventTypeName(evt.type);
         if (typeName === "TaskRunSubmitted") {
-            current.submitted_at_ms ??= timestampMs;
+            current.submitted_at_ms ?? (current.submitted_at_ms = timestampMs);
             current.next_run_ms = numberFromUnknown(parsed.next_run_ms) ?? current.next_run_ms;
             if (current.status !== "FINALIZED" && current.status !== "ABORTED")
                 current.status = "OPEN";
             continue;
         }
         if (typeName === "TaskRunMediationStarted") {
-            current.submitted_at_ms ??= timestampMs;
+            current.submitted_at_ms ?? (current.submitted_at_ms = timestampMs);
             if (current.status !== "FINALIZED" && current.status !== "ABORTED")
                 current.status = "MEDIATION";
             continue;
@@ -335,8 +397,143 @@ function buildRunHistory(events, results, fields) {
     }
     return [...byRun.values()].sort((a, b) => b.run_index - a.run_index);
 }
+function pickFirst(...values) {
+    for (const value of values) {
+        if (value !== undefined && value !== null)
+            return value;
+    }
+    return null;
+}
+function collectArrayItems(value, out) {
+    if (value == null)
+        return;
+    if (Array.isArray(value)) {
+        for (const item of value)
+            collectArrayItems(item, out);
+        return;
+    }
+    if (typeof value !== "object") {
+        out.push(value);
+        return;
+    }
+    const record = value;
+    const nestedFields = asRecord(record.fields);
+    if (nestedFields && nestedFields !== record)
+        collectArrayItems(nestedFields, out);
+    for (const key of ["items", "contents", "vec", "value", "fields", "data"]) {
+        if (key in record)
+            collectArrayItems(record[key], out);
+    }
+}
+function nestedArray(value) {
+    const out = [];
+    collectArrayItems(value, out);
+    return out;
+}
+function nestedTextArray(value) {
+    const out = [];
+    for (const item of nestedArray(value)) {
+        const normalized = normalizeAddress(moveObjectIdToString(item) || String(item ?? ""));
+        if (normalized)
+            out.push(normalized);
+    }
+    return out.filter((item, index) => out.indexOf(item) === index);
+}
+async function fetchTaskSnapshot(taskId, network) {
+    const runtime = getRuntimeConfig(network);
+    const client = new IotaClient({ url: runtime.rpcUrl });
+    const response = await client.getObject({
+        id: taskId,
+        options: {
+            showType: true,
+            showOwner: true,
+            showContent: true,
+            showDisplay: true,
+        },
+    });
+    const data = response?.data;
+    if (!data) {
+        throw new Error(`Task not found: ${taskId}`);
+    }
+    const fields = extractFields(data.content) ?? {};
+    const taskType = String(data.type ?? "");
+    const taskPackageId = taskType.split("::")[0] || runtime.oracleTasksPackageId || "";
+    const latestResultSeq = numberFromUnknown(fields.latest_result_seq) ?? 0;
+    const results = latestResultSeq > 0 && runtime.oracleTasksPackageId
+        ? await fetchTaskResults(client, taskId, runtime.oracleTasksPackageId)
+        : [];
+    const [taskEvents, messageEvents] = taskPackageId
+        ? await Promise.all([
+            queryTaskEventsByModule(client, taskPackageId, config.oracleTaskModule, taskId).catch(() => []),
+            queryTaskEventsByModule(client, taskPackageId, config.oracleMessageModule, taskId).catch(() => []),
+        ])
+        : [[], []];
+    const allEvents = [...taskEvents, ...messageEvents].sort((a, b) => Number(a.timestampMs ?? 0) - Number(b.timestampMs ?? 0));
+    const run_history = buildRunHistory(allEvents, results, fields);
+    const latestResultFields = results[0]?.raw ?? {};
+    const task = {
+        objectId: data.objectId,
+        version: data.version,
+        digest: data.digest,
+        type: data.type,
+        owner: data.owner ?? null,
+        task_id: data.objectId,
+        creator: pickFirst(fields.creator),
+        template_id: pickFirst(fields.template_id, fields.config?.fields?.template_id),
+        task_type: pickFirst(fields.task_type, fields.config?.fields?.task_type),
+        payload: pickFirst(fields.payload, fields.config?.fields?.payload),
+        retention_days: pickFirst(fields.retention_days, fields.config?.fields?.retention_days),
+        declared_download_bytes: pickFirst(fields.declared_download_bytes, fields.config?.fields?.declared_download_bytes),
+        mediation_mode: pickFirst(fields.mediation_mode, fields.config?.fields?.mediation_mode),
+        variance_max: pickFirst(fields.variance_max, fields.config?.fields?.variance_max),
+        requested_nodes: pickFirst(fields.requested_nodes, fields.config?.fields?.requested_nodes),
+        create_controller_cap: pickFirst(fields.create_controller_cap, fields.config?.fields?.create_controller_cap),
+        start_schedule_ms: pickFirst(fields.start_schedule_ms, fields.config?.fields?.start_schedule_ms),
+        end_schedule_ms: pickFirst(fields.end_schedule_ms, fields.config?.fields?.end_schedule_ms),
+        interval_ms: pickFirst(fields.interval_ms, fields.config?.fields?.interval_ms),
+        last_run_ms: pickFirst(fields.last_run_ms, fields.runtime?.fields?.last_run_ms),
+        next_run_ms: pickFirst(fields.next_run_ms, fields.runtime?.fields?.next_run_ms),
+        assigned_nodes: nestedTextArray(pickFirst(fields.assigned_nodes, fields.runtime?.fields?.assigned_nodes, fields.consensus?.fields?.assigned_nodes)),
+        status: pickFirst(fields.status, fields.runtime?.fields?.status),
+        execution_state: pickFirst(fields.execution_state, fields.runtime?.fields?.execution_state),
+        active_round: pickFirst(fields.active_round, fields.runtime?.fields?.active_round),
+        state: taskCompatState(fields),
+        quorum_k: Number(pickFirst(fields.quorum_k, fields.config?.fields?.quorum_k, fields.consensus?.fields?.quorum_k, 0)),
+        multisig_addr: pickFirst(latestResultFields.multisig_addr, fields.multisig_addr, fields.certificate?.fields?.multisig_addr),
+        multisig_bytes: pickFirst(latestResultFields.multisig_bytes, fields.multisig_bytes, fields.certificate?.fields?.multisig_bytes),
+        certificate_blob: pickFirst(latestResultFields.certificate_blob, fields.certificate_blob, fields.certificate?.fields?.certificate_blob),
+        certificate_signers: nestedTextArray(pickFirst(latestResultFields.certificate_signers, fields.certificate_signers, fields.certificate?.fields?.certificate_signers)),
+        result: pickFirst(latestResultFields.result, fields.result, fields.runtime?.fields?.result),
+        result_hash: pickFirst(latestResultFields.result_hash, fields.result_hash, fields.runtime?.fields?.result_hash),
+        result_bytes: pickFirst(latestResultFields.result, latestResultFields.result_bytes, fields.result_bytes, fields.runtime?.fields?.result_bytes),
+        reason_code: pickFirst(latestResultFields.reason_code, 0),
+        latest_result_seq: pickFirst(fields.latest_result_seq, fields.runtime?.fields?.latest_result_seq),
+        result_order: nestedArray(pickFirst(fields.result_order, fields.runtime?.fields?.result_order)),
+        latest_result: latestResultFields,
+        results,
+        run_history,
+        raw: fields,
+    };
+    return {
+        taskId,
+        packageId: taskPackageId,
+        task,
+        events: allEvents,
+    };
+}
 app.get("/api/health", (_req, res) => {
     res.json({ ok: true, service: "iota_oracle_webview", time: new Date().toISOString() });
+});
+app.get("/api/legal/eula", async (_req, res) => {
+    try {
+        const result = await loadEulaMarkdown();
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("X-EULA-Source", result.source);
+        res.type("text/markdown").send(result.markdown);
+    }
+    catch (error) {
+        sendApiError(res, 500, error);
+    }
 });
 app.get("/api/status", async (req, res) => {
     try {
@@ -362,7 +559,7 @@ app.get("/api/network", (req, res) => {
     const requested = typeof req.query.network === "string" ? req.query.network : undefined;
     const runtime = getRuntimeConfig(requested);
     res.json({
-        activeNetwork: requested ? runtime.network : getActiveNetwork(),
+        activeNetwork: runtime.network,
         supportedNetworks: getSupportedNetworks(),
         rpcUrl: runtime.rpcUrl,
         graphqlUrl: runtime.graphqlUrl || null,
@@ -371,14 +568,14 @@ app.get("/api/network", (req, res) => {
         stateId: runtime.oracleStateId || null,
     });
 });
-app.post("/api/network", (req, res) => {
+app.post("/api/network", walletAuth.operation((req, res) => {
     try {
         const network = String(req.body?.network ?? "").trim();
         if (!network) {
             res.status(400).json({ error: "Body must include network." });
             return;
         }
-        const activeNetwork = setActiveNetwork(network);
+        const activeNetwork = getRuntimeConfig(network).network;
         const runtime = getRuntimeConfig(activeNetwork);
         res.json({
             ok: true,
@@ -394,7 +591,7 @@ app.post("/api/network", (req, res) => {
     catch (error) {
         sendApiError(res, 400, error);
     }
-});
+}));
 app.get("/api/examples", async (_req, res) => {
     try {
         const items = await listExampleTasks();
@@ -430,112 +627,14 @@ app.get("/api/task/:taskId", async (req, res) => {
             res.status(400).json({ error: "Missing taskId" });
             return;
         }
-        const runtime = getRuntimeConfig(network);
-        const client = new IotaClient({ url: runtime.rpcUrl });
-        const response = await client.getObject({
-            id: taskId,
-            options: {
-                showType: true,
-                showOwner: true,
-                showContent: true,
-                showDisplay: true,
-            },
-        });
-        const data = response?.data;
-        if (!data) {
-            res.status(404).json({ error: `Task not found: ${taskId}` });
-            return;
-        }
-        const fields = extractFields(data.content) ?? {};
-        const taskType = String(data.type ?? "");
-        const taskPackageId = taskType.split("::")[0] || runtime.oracleTasksPackageId || "";
-        const latestResultSeq = numberFromUnknown(fields.latest_result_seq) ?? 0;
-        const results = latestResultSeq > 0 && runtime.oracleTasksPackageId
-            ? await fetchTaskResults(client, taskId, runtime.oracleTasksPackageId)
-            : [];
-        const [taskEvents, messageEvents] = taskPackageId
-            ? await Promise.all([
-                queryTaskEventsByModule(client, taskPackageId, config.oracleTaskModule, taskId).catch(() => []),
-                queryTaskEventsByModule(client, taskPackageId, config.oracleMessageModule, taskId).catch(() => []),
-            ])
-            : [[], []];
-        const allEvents = [...taskEvents, ...messageEvents].sort((a, b) => Number(a.timestampMs ?? 0) - Number(b.timestampMs ?? 0));
-        const run_history = buildRunHistory(allEvents, results, fields);
-        const latestResultFields = results[0]?.raw ?? {};
-        function pick(...values) {
-            for (const v of values) {
-                if (v !== undefined && v !== null)
-                    return v;
-            }
-            return null;
-        }
-        function collectArrayItems(value, out) {
-            if (value == null)
-                return;
-            if (Array.isArray(value)) {
-                for (const item of value)
-                    collectArrayItems(item, out);
-                return;
-            }
-            if (typeof value !== "object") {
-                out.push(value);
-                return;
-            }
-            const record = value;
-            const nestedFields = asRecord(record.fields);
-            if (nestedFields && nestedFields !== record)
-                collectArrayItems(nestedFields, out);
-            for (const key of ["items", "contents", "vec", "value", "fields", "data"]) {
-                if (key in record)
-                    collectArrayItems(record[key], out);
-            }
-        }
-        function asArray(value) {
-            const out = [];
-            collectArrayItems(value, out);
-            return out;
-        }
-        function asTextArray(value) {
-            const out = [];
-            for (const item of asArray(value)) {
-                const normalized = normalizeAddress(moveObjectIdToString(item) || String(item ?? ""));
-                if (normalized)
-                    out.push(normalized);
-            }
-            return out.filter((item, index) => out.indexOf(item) === index);
-        }
-        const normalized = {
-            objectId: data.objectId,
-            version: data.version,
-            digest: data.digest,
-            type: data.type,
-            owner: data.owner ?? null,
-            task_id: data.objectId,
-            template_id: pick(fields.template_id, fields.config?.fields?.template_id),
-            assigned_nodes: asTextArray(pick(fields.assigned_nodes, fields.runtime?.fields?.assigned_nodes, fields.consensus?.fields?.assigned_nodes)),
-            status: pick(fields.status, fields.runtime?.fields?.status),
-            execution_state: pick(fields.execution_state, fields.runtime?.fields?.execution_state),
-            active_round: pick(fields.active_round, fields.runtime?.fields?.active_round),
-            state: taskCompatState(fields),
-            quorum_k: Number(pick(fields.quorum_k, fields.config?.fields?.quorum_k, fields.consensus?.fields?.quorum_k, 0)),
-            multisig_addr: pick(latestResultFields.multisig_addr, fields.multisig_addr, fields.certificate?.fields?.multisig_addr),
-            multisig_bytes: pick(latestResultFields.multisig_bytes, fields.multisig_bytes, fields.certificate?.fields?.multisig_bytes),
-            certificate_blob: pick(latestResultFields.certificate_blob, fields.certificate_blob, fields.certificate?.fields?.certificate_blob),
-            certificate_signers: asTextArray(pick(latestResultFields.certificate_signers, fields.certificate_signers, fields.certificate?.fields?.certificate_signers)),
-            result: pick(latestResultFields.result, fields.result, fields.runtime?.fields?.result),
-            result_hash: pick(latestResultFields.result_hash, fields.result_hash, fields.runtime?.fields?.result_hash),
-            result_bytes: pick(latestResultFields.result, latestResultFields.result_bytes, fields.result_bytes, fields.runtime?.fields?.result_bytes),
-            reason_code: pick(latestResultFields.reason_code, 0),
-            latest_result_seq: pick(fields.latest_result_seq, fields.runtime?.fields?.latest_result_seq),
-            result_order: asArray(pick(fields.result_order, fields.runtime?.fields?.result_order)),
-            latest_result: latestResultFields,
-            results,
-            run_history,
-            raw: fields,
-        };
-        res.json(normalized);
+        const snapshot = await fetchTaskSnapshot(taskId, network);
+        res.json(snapshot.task);
     }
     catch (error) {
+        if (error instanceof Error && error.message.startsWith("Task not found:")) {
+            sendApiError(res, 404, error);
+            return;
+        }
         sendApiError(res, 500, error);
     }
 });
@@ -547,30 +646,78 @@ app.get("/api/task/:taskId/events", async (req, res) => {
             res.status(400).json({ error: "Missing taskId" });
             return;
         }
-        const runtime = getRuntimeConfig(network);
-        const client = new IotaClient({ url: runtime.rpcUrl });
-        const taskObj = await client.getObject({
-            id: taskId,
-            options: { showType: true },
-        });
-        const taskType = String(taskObj?.data?.type ?? "");
-        const taskPackageId = taskType.split("::")[0] || runtime.oracleTasksPackageId;
-        const [taskEvents, messageEvents] = await Promise.all([
-            queryTaskEventsByModule(client, taskPackageId, config.oracleTaskModule, taskId),
-            queryTaskEventsByModule(client, taskPackageId, config.oracleMessageModule, taskId).catch(() => []),
-        ]);
-        const events = [...taskEvents, ...messageEvents].sort((a, b) => Number(a.timestampMs ?? 0) - Number(b.timestampMs ?? 0));
+        const snapshot = await fetchTaskSnapshot(taskId, network);
         res.json({
             taskId,
-            packageId: taskPackageId,
-            events,
+            packageId: snapshot.packageId,
+            events: snapshot.events,
         });
     }
     catch (error) {
+        if (error instanceof Error && error.message.startsWith("Task not found:")) {
+            sendApiError(res, 404, error);
+            return;
+        }
         sendApiError(res, 500, error);
     }
 });
-app.post("/api/tasks/prepare-wallet", async (req, res) => {
+app.get("/api/task/:taskId/stream", async (req, res) => {
+    const taskId = String(req.params.taskId ?? "").trim();
+    const network = typeof req.query.network === "string" ? req.query.network : undefined;
+    if (!taskId) {
+        res.status(400).json({ error: "Missing taskId" });
+        return;
+    }
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+    let closed = false;
+    let timer = null;
+    let lastSnapshotSignature = "";
+    const sendEvent = (eventName, payload) => {
+        if (closed)
+            return;
+        res.write(`event: ${eventName}\n`);
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+    const scheduleNextPoll = () => {
+        if (closed)
+            return;
+        timer = setTimeout(() => {
+            void pollSnapshot();
+        }, TASK_STREAM_POLL_MS);
+    };
+    const pollSnapshot = async () => {
+        try {
+            const snapshot = await fetchTaskSnapshot(taskId, network);
+            const signature = JSON.stringify(snapshot);
+            if (signature !== lastSnapshotSignature) {
+                lastSnapshotSignature = signature;
+                sendEvent("snapshot", snapshot);
+            }
+            else {
+                res.write(": keep-alive\n\n");
+            }
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            sendEvent("error", { error: message });
+        }
+        finally {
+            scheduleNextPoll();
+        }
+    };
+    sendEvent("ready", { ok: true, taskId, network: network ?? getActiveNetwork() });
+    void pollSnapshot();
+    req.on("close", () => {
+        closed = true;
+        if (timer)
+            clearTimeout(timer);
+        res.end();
+    });
+});
+app.post("/api/tasks/prepare-wallet", walletAuth.operation(async (req, res) => {
     try {
         if (typeof req.body !== "object" || req.body === null || !("task" in req.body)) {
             res.status(400).json({ error: 'Body must be { "task": ..., "sender": "0x..." }.' });
@@ -582,14 +729,14 @@ app.post("/api/tasks/prepare-wallet", async (req, res) => {
             return;
         }
         const network = typeof req.body.network === "string" ? req.body.network.trim() : "";
-        const result = await prepareOracleTaskForWallet(req.body.task, sender, network ? setActiveNetwork(network) : undefined);
+        const result = await prepareOracleTaskForWallet(req.body.task, sender, network ? network : undefined);
         res.json(result);
     }
     catch (error) {
         sendApiError(res, 500, error);
     }
-});
-app.post("/api/tasks/prepare-task-schedule-wallet", async (req, res) => {
+}));
+app.post("/api/tasks/prepare-task-schedule-wallet", walletAuth.operation(async (req, res) => {
     try {
         const task = req.body?.task;
         const schedule = req.body?.schedule;
@@ -609,35 +756,122 @@ app.post("/api/tasks/prepare-task-schedule-wallet", async (req, res) => {
     catch (error) {
         sendApiError(res, 400, error);
     }
-});
-app.post("/api/tasks/execute", async (req, res) => {
+}));
+app.post("/api/task-schedules/prepare-action-wallet", walletAuth.operation(async (req, res) => {
     try {
-        if (typeof req.body !== "object" || req.body === null || !("task" in req.body)) {
-            res.status(400).json({ error: 'Body must be { "task": ... }.' });
+        const action = req.body?.action;
+        const sender = String(req.body?.sender ?? "").trim();
+        const network = typeof req.body?.network === "string" ? req.body.network : undefined;
+        if (!sender) {
+            res.status(400).json({ error: "Body must include sender." });
             return;
         }
-        const network = typeof req.body.network === "string" ? req.body.network.trim() : "";
-        const result = await executeOracleTask(req.body.task, network ? setActiveNetwork(network) : undefined);
-        res.status(result.ok ? 200 : 500).json(result);
+        if (!action || typeof action !== "object" || Array.isArray(action)) {
+            res.status(400).json({ error: "Body must include action object." });
+            return;
+        }
+        const prepared = await prepareScheduledTaskActionForWallet(action, sender, network);
+        res.json(prepared);
     }
     catch (error) {
-        sendApiError(res, 500, error);
+        sendApiError(res, 400, error);
     }
-});
+}));
+app.post("/api/node-management/prepare-wallet", walletAuth.operation(async (req, res) => {
+    try {
+        const sender = String(req.body?.sender ?? "").trim();
+        const network = typeof req.body?.network === "string" ? req.body.network : undefined;
+        const acceptedTemplateIdsRaw = Array.isArray(req.body?.acceptedTemplateIds)
+            ? req.body.acceptedTemplateIds
+            : null;
+        if (!sender) {
+            res.status(400).json({ error: "Body must include sender." });
+            return;
+        }
+        if (!acceptedTemplateIdsRaw) {
+            res.status(400).json({ error: "Body must include acceptedTemplateIds array." });
+            return;
+        }
+        const acceptedTemplateIds = acceptedTemplateIdsRaw
+            .map((item) => Number(item))
+            .filter((item) => Number.isFinite(item) && item >= 0)
+            .map((item) => Math.floor(item));
+        const prepared = await prepareNodeManagementForWallet(sender, acceptedTemplateIds, network);
+        res.json(prepared);
+    }
+    catch (error) {
+        sendApiError(res, 400, error);
+    }
+}));
+app.post("/api/node-management/prepare-approve-wallet", walletAuth.operation(async (req, res) => {
+    try {
+        const sender = String(req.body?.sender ?? "").trim();
+        const network = typeof req.body?.network === "string" ? req.body.network : undefined;
+        const proposalId = Number(req.body?.proposalId);
+        const templateId = Number(req.body?.templateId);
+        if (!sender) {
+            res.status(400).json({ error: "Body must include sender." });
+            return;
+        }
+        if (!Number.isFinite(proposalId) || proposalId <= 0) {
+            res.status(400).json({ error: "Body must include a valid proposalId." });
+            return;
+        }
+        if (!Number.isFinite(templateId) || templateId < 0) {
+            res.status(400).json({ error: "Body must include a valid templateId." });
+            return;
+        }
+        const prepared = await prepareProposalApprovalForWallet(sender, Math.floor(proposalId), Math.floor(templateId), network);
+        res.json(prepared);
+    }
+    catch (error) {
+        sendApiError(res, 400, error);
+    }
+}));
 const distPath = path.resolve(process.cwd(), "dist");
-app.use(express.static(distPath));
+const indexPath = path.join(distPath, "index.html");
+function verifyBuiltAssets() {
+    const indexHtml = fs.readFileSync(indexPath, "utf8");
+    const assetRefs = [...indexHtml.matchAll(/(?:src|href)="\/([^"?#]+)"/g)]
+        .map((match) => match[1])
+        .filter((assetPath) => assetPath.startsWith("assets/"));
+    const missingAssets = assetRefs.filter((assetPath) => !fs.existsSync(path.join(distPath, assetPath)));
+    if (missingAssets.length) {
+        throw new Error(`Webview build is missing asset(s): ${missingAssets.join(", ")}`);
+    }
+    return assetRefs;
+}
+const builtAssetRefs = verifyBuiltAssets();
+app.use(express.static(distPath, {
+    setHeaders(res, filePath) {
+        const normalizedPath = filePath.replace(/\\/g, "/");
+        if (normalizedPath.endsWith("/index.html")) {
+            res.setHeader("Cache-Control", "no-cache");
+            return;
+        }
+        if (normalizedPath.includes("/assets/")) {
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+    },
+}));
 app.get("*", (req, res) => {
     if (req.path.startsWith("/api/")) {
         res.status(404).json({ error: `API route not found: ${req.path}` });
         return;
     }
-    res.sendFile(path.join(distPath, "index.html"));
+    if (path.extname(req.path)) {
+        res.status(404).type("text/plain").send(`Static asset not found: ${req.path}`);
+        return;
+    }
+    res.sendFile(indexPath);
 });
 app.listen(config.port, "0.0.0.0", () => {
     const runtime = getRuntimeConfig();
     console.log(`[iota_oracle_webview] listening on http://0.0.0.0:${config.port}`);
     console.log(`[iota_oracle_webview] client dir: ${config.oracleClientDir}`);
     console.log(`[iota_oracle_webview] examples dir: ${config.oracleExamplesDir}`);
+    console.log(`[iota_oracle_webview] dist dir: ${distPath}`);
+    console.log(`[iota_oracle_webview] built assets: ${builtAssetRefs.join(", ")}`);
     console.log(`[iota_oracle_webview] env cwd: ${envDebug.cwd}`);
     console.log(`[iota_oracle_webview] active network: ${getActiveNetwork()}`);
     console.log(`[iota_oracle_webview] supported networks: ${getSupportedNetworks().join(", ")}`);

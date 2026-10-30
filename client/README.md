@@ -122,3 +122,18 @@ automatically:
 - the task creation event is now `TaskLifecycleEvent` with `kind=1`
 
 Required envs: `ORACLE_TASKS_PACKAGE_ID`, `ORACLE_SYSTEM_PACKAGE_ID`, `ORACLE_STATE_ID`, `ORACLE_TREASURY_ID`, `IOTA_RANDOM_OBJECT_ID`, `IOTA_CLOCK_ID`.
+
+## Authenticated Webview API client
+
+The direct CLI submission above is independent of the Webview and unchanged.
+If you use the Webview preparation API instead, obtain a short-lived session:
+
+```bash
+npm run auth:webview -- https://oracle.example.com testnet
+```
+
+The command signs a personal message with the local client key and returns a
+bearer session as JSON; it does not send the key or a blockchain transaction.
+Protect the printed token as a credential. See
+[Webview API authentication](../docs/WEBVIEW_API_AUTHENTICATION.md) for request
+format, renewal, limits and the reusable `authenticateWebview` helper.

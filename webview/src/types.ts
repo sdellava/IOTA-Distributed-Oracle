@@ -101,17 +101,6 @@ export type ExampleTask = {
   path: string;
 };
 
-export type ExecuteTaskResponse = {
-  ok: boolean;
-  cwd: string;
-  command: string;
-  taskFilePath: string;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  startedAt: string;
-  finishedAt: string;
-};
 
 export type PreparedWalletTaskResponse = {
   ok: true;
@@ -145,11 +134,6 @@ export type PreparedWalletTaskResponse = {
     storageSourceUrl?: string;
     payloadJson: unknown;
   };
-  cwd: string;
-  command: string;
-  taskFilePath: string;
-  stdout: string;
-  stderr: string;
   exitCode: number | null;
   startedAt: string;
   finishedAt: string;
@@ -189,11 +173,6 @@ export type PreparedTaskScheduleWalletResponse = {
     storageSourceUrl?: string;
     payloadJson: unknown;
   };
-  cwd: string;
-  command: string;
-  taskFilePath: string;
-  stdout: string;
-  stderr: string;
   exitCode: number | null;
   startedAt: string;
   finishedAt: string;
@@ -277,11 +256,6 @@ export type PreparedScheduledTaskActionWalletResponse = {
   useSupervisor: boolean;
   controllerCapId: string | null;
   target: string;
-  cwd: string;
-  command: string;
-  taskFilePath: string;
-  stdout: string;
-  stderr: string;
   exitCode: number | null;
   startedAt: string;
   finishedAt: string;

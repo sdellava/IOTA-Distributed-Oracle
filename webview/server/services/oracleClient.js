@@ -5,9 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import dotenv from "dotenv";
+import { preparationEnvironment } from "../clientEnvironment.js";
 import { config, getRuntimeConfig } from "../config.js";
 const activeChildren = new Set();
 let cleanupHooksInstalled = false;
+let reservedChildren = 0;
 function npmCommand() {
     return "npm";
 }
@@ -38,6 +40,9 @@ async function buildClientEnv(network) {
         runtimeOverrides.ORACLE_STATUS_ID = runtime.oracleStateId;
         runtimeOverrides.ORACLE_SYSTEM_STATE_ID = runtime.oracleStateId;
     }
+    if (runtime.oracleNodeRegistryId) {
+        runtimeOverrides.ORACLE_NODE_REGISTRY_ID = runtime.oracleNodeRegistryId;
+    }
     if (runtime.oracleTreasuryId) {
         runtimeOverrides.ORACLE_TREASURY_ID = runtime.oracleTreasuryId;
         runtimeOverrides.ORACLE_TREASURY_OBJECT_ID = runtime.oracleTreasuryId;
@@ -59,12 +64,15 @@ async function buildClientEnv(network) {
         runtimeOverrides.IOTA_CLOCK_ID = runtime.iotaClockObjectId;
     }
     return {
-        ...process.env,
-        ...parsed,
+        ...preparationEnvironment(process.env, parsed),
         ...runtimeOverrides,
     };
 }
 async function spawnClientCommand(args, network) {
+    if (args[0] !== "run" || args[1] !== "create" || args[2] !== "--" ||
+        !["prepare-webview", "prepare-task-schedule-webview", "prepare-scheduled-task-action-webview"].includes(args[3])) {
+        throw new Error("Only wallet preparation commands are supported.");
+    }
     const env = await buildClientEnv(network);
     const effectiveArgs = ["--silent", ...args];
     if (process.platform === "win32") {
@@ -83,7 +91,7 @@ async function spawnClientCommand(args, network) {
 function childTimeoutMs() {
     const raw = process.env.WEBVIEW_CLIENT_TIMEOUT_MS?.trim();
     const parsed = raw ? Number(raw) : NaN;
-    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 120_000;
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 120000;
 }
 function terminateChild(child, reason) {
     if (child.killed || child.exitCode != null)
@@ -101,7 +109,7 @@ function terminateChild(child, reason) {
             if (!child.killed && child.exitCode == null) {
                 child.kill("SIGKILL");
             }
-        }, 5_000).unref();
+        }, 5000).unref();
     }
     catch {
         console.warn(`[iota_oracle_webview] failed to terminate child (${reason}) pid=${String(child.pid ?? "?")}`);
@@ -120,33 +128,41 @@ function installCleanupHooks() {
     process.on("SIGINT", () => cleanup("SIGINT"));
     process.on("SIGTERM", () => cleanup("SIGTERM"));
 }
-async function runChildCommand(childPromise) {
-    installCleanupHooks();
-    const child = await childPromise;
-    activeChildren.add(child);
-    return new Promise((resolve, reject) => {
-        let stdout = "";
-        let stderr = "";
-        const timeout = setTimeout(() => {
-            terminateChild(child, "timeout");
-        }, childTimeoutMs());
-        child.stdout?.on("data", (chunk) => {
-            stdout += String(chunk);
+async function runChildCommand(childFactory) {
+    if (reservedChildren >= 4)
+        throw new Error("Preparation capacity reached. Retry later.");
+    reservedChildren++;
+    try {
+        installCleanupHooks();
+        const child = await childFactory();
+        activeChildren.add(child);
+        return await new Promise((resolve, reject) => {
+            let stdout = "";
+            let stderr = "";
+            const timeout = setTimeout(() => {
+                terminateChild(child, "timeout");
+            }, childTimeoutMs());
+            child.stdout?.on("data", (chunk) => {
+                stdout += String(chunk);
+            });
+            child.stderr?.on("data", (chunk) => {
+                stderr += String(chunk);
+            });
+            child.on("error", (error) => {
+                clearTimeout(timeout);
+                activeChildren.delete(child);
+                reject(error);
+            });
+            child.on("close", (exitCode) => {
+                clearTimeout(timeout);
+                activeChildren.delete(child);
+                resolve({ stdout, stderr, exitCode });
+            });
         });
-        child.stderr?.on("data", (chunk) => {
-            stderr += String(chunk);
-        });
-        child.on("error", (error) => {
-            clearTimeout(timeout);
-            activeChildren.delete(child);
-            reject(error);
-        });
-        child.on("close", (exitCode) => {
-            clearTimeout(timeout);
-            activeChildren.delete(child);
-            resolve({ stdout, stderr, exitCode });
-        });
-    });
+    }
+    finally {
+        reservedChildren--;
+    }
 }
 function extractJsonFromStdout(stdout) {
     const trimmed = stdout.trim();
@@ -178,8 +194,7 @@ function extractJsonFromStdout(stdout) {
         }
         catch { }
     }
-    throw new Error(`Wallet preparation did not return valid JSON. Raw stdout:
-${stdout}`);
+    throw new Error("Wallet preparation did not return valid JSON.");
 }
 function normalizeTaskPayloadInput(input) {
     let value = input;
@@ -207,14 +222,14 @@ function normalizeTaskPayloadInput(input) {
     }
     return normalized;
 }
-async function spawnCreateTask(taskFilePath, network) {
-    return spawnClientCommand(["run", "create", "--", taskFilePath], network);
-}
 async function spawnPrepareWalletTask(taskFilePath, sender, network) {
     return spawnClientCommand(["run", "create", "--", "prepare-webview", taskFilePath, sender], network);
 }
 async function spawnPrepareTaskScheduleWalletTask(taskFilePath, scheduleFilePath, sender, network) {
     return spawnClientCommand(["run", "create", "--", "prepare-task-schedule-webview", taskFilePath, scheduleFilePath, sender], network);
+}
+async function spawnPrepareScheduledTaskActionWalletTask(actionFilePath, sender, network) {
+    return spawnClientCommand(["run", "create", "--", "prepare-scheduled-task-action-webview", actionFilePath, sender], network);
 }
 export async function listExampleTasks() {
     try {
@@ -247,8 +262,8 @@ export async function prepareOracleTaskForWallet(task, sender, network) {
         throw new Error(`Oracle client directory not found: ${config.oracleClientDir}`);
     });
     const normalizedSender = String(sender ?? "").trim();
-    if (!normalizedSender) {
-        throw new Error("Wallet sender address is required.");
+    if (!/^0x[0-9a-f]{1,64}$/i.test(normalizedSender)) {
+        throw new Error("A valid wallet sender address is required.");
     }
     const normalizedTask = normalizeTaskPayloadInput(task);
     await fs.mkdir(path.join(os.tmpdir(), "iota_oracle_webview"), { recursive: true });
@@ -257,22 +272,15 @@ export async function prepareOracleTaskForWallet(task, sender, network) {
     await fs.writeFile(taskFilePath, `${JSON.stringify(normalizedTask, null, 2)}\n`, "utf8");
     const startedAt = new Date().toISOString();
     try {
-        const result = await runChildCommand(spawnPrepareWalletTask(taskFilePath, normalizedSender, network));
+        const result = await runChildCommand(() => spawnPrepareWalletTask(taskFilePath, normalizedSender, network));
         if (result.exitCode !== 0) {
-            throw new Error(result.stderr.trim() ||
-                result.stdout.trim() ||
-                `Wallet preparation failed with exit code ${String(result.exitCode)}`);
+            console.error("[wallet preparation]", result.stderr || result.stdout);
+            const code = (result.stderr + result.stdout).match(/TASK_[A-Z_0-9]+/)?.[0];
+            throw new Error(code || "Wallet preparation failed. Check task parameters, wallet balance and network availability.");
         }
         const parsed = extractJsonFromStdout(result.stdout);
         return {
             ...parsed,
-            cwd: config.oracleClientDir,
-            command: process.platform === "win32"
-                ? `cmd.exe /d /s /c npm --silent run create -- prepare-webview ${taskFilePath} ${normalizedSender}`
-                : `${npmCommand()} --silent run create -- prepare-webview ${taskFilePath} ${normalizedSender}`,
-            taskFilePath,
-            stdout: result.stdout,
-            stderr: result.stderr,
             exitCode: result.exitCode,
             startedAt,
             finishedAt: new Date().toISOString(),
@@ -287,8 +295,8 @@ export async function prepareOracleTaskScheduleForWallet(task, schedule, sender,
         throw new Error(`Oracle client directory not found: ${config.oracleClientDir}`);
     });
     const normalizedSender = String(sender ?? "").trim();
-    if (!normalizedSender) {
-        throw new Error("Wallet sender address is required.");
+    if (!/^0x[0-9a-f]{1,64}$/i.test(normalizedSender)) {
+        throw new Error("A valid wallet sender address is required.");
     }
     const normalizedTask = normalizeTaskPayloadInput(task);
     const normalizedSchedule = schedule && typeof schedule === "object" && !Array.isArray(schedule)
@@ -304,22 +312,15 @@ export async function prepareOracleTaskScheduleForWallet(task, schedule, sender,
     await fs.writeFile(scheduleFilePath, `${JSON.stringify(normalizedSchedule, null, 2)}\n`, "utf8");
     const startedAt = new Date().toISOString();
     try {
-        const result = await runChildCommand(spawnPrepareTaskScheduleWalletTask(taskFilePath, scheduleFilePath, normalizedSender, network));
+        const result = await runChildCommand(() => spawnPrepareTaskScheduleWalletTask(taskFilePath, scheduleFilePath, normalizedSender, network));
         if (result.exitCode !== 0) {
-            throw new Error(result.stderr.trim() ||
-                result.stdout.trim() ||
-                `Scheduled wallet preparation failed with exit code ${String(result.exitCode)}`);
+            console.error("[wallet preparation]", result.stderr || result.stdout);
+            const code = (result.stderr + result.stdout).match(/TASK_[A-Z_0-9]+/)?.[0];
+            throw new Error(code || "Wallet preparation failed. Check task parameters, wallet balance and network availability.");
         }
         const parsed = extractJsonFromStdout(result.stdout);
         return {
             ...parsed,
-            cwd: config.oracleClientDir,
-            command: process.platform === "win32"
-                ? `cmd.exe /d /s /c npm --silent run create -- prepare-task-schedule-webview ${taskFilePath} ${scheduleFilePath} ${normalizedSender}`
-                : `${npmCommand()} --silent run create -- prepare-task-schedule-webview ${taskFilePath} ${scheduleFilePath} ${normalizedSender}`,
-            taskFilePath,
-            stdout: result.stdout,
-            stderr: result.stderr,
             exitCode: result.exitCode,
             startedAt,
             finishedAt: new Date().toISOString(),
@@ -329,27 +330,34 @@ export async function prepareOracleTaskScheduleForWallet(task, schedule, sender,
         await fs.rm(tempDir, { recursive: true, force: true });
     }
 }
-export async function executeOracleTask(task, network) {
+export async function prepareScheduledTaskActionForWallet(action, sender, network) {
     await fs.access(config.oracleClientDir).catch(() => {
         throw new Error(`Oracle client directory not found: ${config.oracleClientDir}`);
     });
-    const normalizedTask = normalizeTaskPayloadInput(task);
+    const normalizedSender = String(sender ?? "").trim();
+    if (!/^0x[0-9a-f]{1,64}$/i.test(normalizedSender)) {
+        throw new Error("A valid wallet sender address is required.");
+    }
+    const normalizedAction = action && typeof action === "object" && !Array.isArray(action)
+        ? { ...action }
+        : (() => {
+            throw new Error("Scheduled task action payload must be a JSON object.");
+        })();
     await fs.mkdir(path.join(os.tmpdir(), "iota_oracle_webview"), { recursive: true });
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "iota_oracle_webview", "task-"));
-    const taskFilePath = path.join(tempDir, "task.json");
-    await fs.writeFile(taskFilePath, `${JSON.stringify(normalizedTask, null, 2)}\n`, "utf8");
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "iota_oracle_webview", "scheduled-task-action-"));
+    const actionFilePath = path.join(tempDir, "action.json");
+    await fs.writeFile(actionFilePath, `${JSON.stringify(normalizedAction, null, 2)}\n`, "utf8");
     const startedAt = new Date().toISOString();
     try {
-        const result = await runChildCommand(spawnCreateTask(taskFilePath, network));
+        const result = await runChildCommand(() => spawnPrepareScheduledTaskActionWalletTask(actionFilePath, normalizedSender, network));
+        if (result.exitCode !== 0) {
+            console.error("[wallet preparation]", result.stderr || result.stdout);
+            const code = (result.stderr + result.stdout).match(/TASK_[A-Z_0-9]+/)?.[0];
+            throw new Error(code || "Wallet preparation failed. Check task parameters, wallet balance and network availability.");
+        }
+        const parsed = extractJsonFromStdout(result.stdout);
         return {
-            ok: result.exitCode === 0,
-            cwd: config.oracleClientDir,
-            command: process.platform === "win32"
-                ? `cmd.exe /d /s /c npm --silent run create -- ${taskFilePath}`
-                : `${npmCommand()} --silent run create -- ${taskFilePath}`,
-            taskFilePath,
-            stdout: result.stdout,
-            stderr: result.stderr,
+            ...parsed,
             exitCode: result.exitCode,
             startedAt,
             finishedAt: new Date().toISOString(),

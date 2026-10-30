@@ -11,7 +11,7 @@ export type WeightedSigner = {
 };
 
 export type RegisteredNodeLike = {
-  nodeId?: string | number;
+  nodeId?: string | number | null;
   id?: string | number;
   address?: string;
   pubkey?: unknown;

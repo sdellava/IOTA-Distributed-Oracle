@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { probeStorageContentLength } from "./storageProbe.js";
 import fs from "node:fs";
 import path from "node:path";
 import { Transaction, coinWithBalance } from "@iota/iota-sdk/transactions";
@@ -533,83 +534,6 @@ function pickStorageSourceUrl(taskObj: any): string {
     throw new Error(`STORAGE source.url must start with http:// or https://: ${sourceUrl}`);
   }
   return sourceUrl;
-}
-
-function parseStorageProbeTimeoutMs(taskObj: any): number {
-  const raw =
-    taskObj?.timeouts?.step1Ms ??
-    taskObj?.timeouts?.storageProbeMs ??
-    taskObj?.storage?.probe_timeout_ms ??
-    taskObj?.storage?.probeTimeoutMs ??
-    process.env.STORAGE_PROBE_TIMEOUT_MS ??
-    15000;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return 15000;
-  return Math.floor(n);
-}
-
-async function probeStorageContentLength(taskObj: any): Promise<bigint> {
-  const sourceUrl = pickStorageSourceUrl(taskObj);
-  const headers = toPlainStringMap(taskObj?.source?.headers);
-  const timeoutMs = parseStorageProbeTimeoutMs(taskObj);
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  const extractSize = (res: Response): bigint | null => {
-    const contentRange = res.headers.get("content-range")?.trim() ?? "";
-    const m = contentRange.match(/\/(\d+)$/);
-    if (m) return BigInt(m[1]);
-
-    const contentLength = res.headers.get("content-length")?.trim() ?? "";
-    if (contentLength) return BigInt(contentLength);
-
-    return null;
-  };
-
-  try {
-    const attempts: Array<() => Promise<Response>> = [
-      () =>
-        fetch(sourceUrl, {
-          method: "HEAD",
-          headers,
-          redirect: "follow",
-          signal: controller.signal,
-        }),
-      () =>
-        fetch(sourceUrl, {
-          method: "GET",
-          headers: { ...headers, Range: "bytes=0-0" },
-          redirect: "follow",
-          signal: controller.signal,
-        }),
-    ];
-
-    const errors: string[] = [];
-
-    for (const attempt of attempts) {
-      try {
-        const res = await attempt();
-        if (!res.ok) {
-          errors.push(`HTTP ${res.status} ${res.statusText}`);
-          continue;
-        }
-
-        const n = extractSize(res);
-        if (n != null && n >= 0n) return n;
-
-        errors.push("Missing Content-Length/Content-Range");
-      } catch (e: any) {
-        errors.push(String(e?.message ?? e));
-      }
-    }
-
-    throw new Error(errors.join(" | "));
-  } catch (e: any) {
-    throw new Error(`Unable to determine STORAGE content length for ${sourceUrl}: ${String(e?.message ?? e)}`);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function parseMediationMode(taskObj: any): number {

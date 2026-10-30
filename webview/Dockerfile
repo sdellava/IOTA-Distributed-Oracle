@@ -6,7 +6,7 @@ RUN apk add --no-cache libc6-compat python3 make g++
 WORKDIR /workspace
 
 COPY webview/package*.json ./webview/
-COPY webview/.env ./webview/.env
+COPY webview/.env.example ./webview/.env
 COPY client/package*.json ./client/
 
 RUN npm config set registry https://registry.npmjs.org/
@@ -22,7 +22,8 @@ COPY client ./client
 
 WORKDIR /workspace/webview
 
-RUN rm -rf dist && \
+RUN --mount=type=secret,id=webview_env,target=/workspace/webview/.env \
+    rm -rf dist && \
     npm run build && \
     node -e "const fs=require('fs'); const path=require('path'); const html=fs.readFileSync('dist/index.html','utf8'); const refs=[...html.matchAll(/(?:src|href)=\"\/([^\"?#]+)\"/g)].map(m=>m[1]).filter(p=>p.startsWith('assets/')); for (const ref of refs) { if (!fs.existsSync(path.join('dist', ref))) { console.error('Missing built asset:', ref); process.exit(1); } } console.log('Verified built assets:', refs.join(', '));"
 

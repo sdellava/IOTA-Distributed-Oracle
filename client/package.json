@@ -6,11 +6,14 @@
   "license": "UNLICENSED",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "create": "tsx src/index.ts"
+    "create": "tsx src/index.ts",
+    "test:security": "tsx --test tests/*.test.ts",
+    "auth:webview": "tsx src/authenticateWebview.ts"
   },
   "dependencies": {
     "@iota/iota-sdk": "1.10.0",
-    "dotenv": "^16.6.1"
+    "dotenv": "^16.6.1",
+    "undici": "^6.29.1"
   },
   "devDependencies": {
     "@types/node": "^25.3.3",

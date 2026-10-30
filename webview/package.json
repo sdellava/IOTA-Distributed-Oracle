@@ -10,7 +10,8 @@
     "dev:server": "tsx watch server/index.ts",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "tsx server/index.ts"
+    "start": "tsx server/index.ts",
+    "test:security": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@iota/dapp-kit": "^0.8.3",

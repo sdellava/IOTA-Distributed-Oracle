@@ -5,7 +5,10 @@
 **/build
 **/coverage
 **/.env
-!webview/.env
 **/storage
 **/runs
 **/*.log
+
+**/keys
+**/*.iotaprivkey
+**/*.key
