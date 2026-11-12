@@ -59,3 +59,10 @@ export function createBoundedFetch(options = {}) {
 }
 export const boundedFetch = createBoundedFetch();
 export const readClient = (url) => new IotaClient({ transport: new IotaHTTPTransport({ url, fetch: boundedFetch }) });
+// Historical work must pass BOTH its small sub-budget and the unchanged global budget.
+export function historyBudget(globalRate, globalConcurrency, requestedRate) {
+    return { rate: Math.min(requestedRate, Math.floor(globalRate / 10)), concurrency: Math.min(3, Math.max(0, globalConcurrency - 1)) };
+}
+export const historicalFetch = createBoundedFetch({ fetch: boundedFetch,
+    ...historyBudget(setting("WEBVIEW_UPSTREAM_PER_MINUTE", 1200, 100000), setting("WEBVIEW_UPSTREAM_CONCURRENCY", 32, 256), setting("WEBVIEW_HISTORY_PER_MINUTE", 60, 600)), timeoutMs: 3000 });
+export const historyClient = (url) => new IotaClient({ transport: new IotaHTTPTransport({ url, fetch: historicalFetch }) });

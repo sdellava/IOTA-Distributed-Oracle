@@ -1,3 +1,4 @@
+import { historyHint } from "../lib/requestPool";
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
@@ -157,8 +158,8 @@ export default function MonitoringPage({ activeNetwork, status, readyToLoad }: P
         />
         <MetricCard label="Registered nodes" value={statusLoaded ? registeredNodes.length : "-"} hint="On-chain registry" />
         <MetricCard label="Live scheduled tasks" value={schedules?.items.length ?? "-"} hint="Task registry" />
-        <MetricCard label="Task objects" value={status?.metrics.onChainTaskObjects ?? "-"} hint="All on-chain" />
-        <MetricCard label="Oracle events" value={status?.metrics.totalOracleEvents ?? "-"} hint="Total indexed" />
+        <MetricCard label="Task objects" value={status?.metrics.onChainTaskObjects ?? "-"} hint={historyHint(status?.metrics.history?.onChainTaskObjects, "All on-chain")} />
+        <MetricCard label="Oracle events" value={status?.metrics.totalOracleEvents ?? "-"} hint={historyHint(status?.metrics.history?.totalOracleEvents, "Total indexed")} />
       </section>
 
       <section className="card card-spaced">

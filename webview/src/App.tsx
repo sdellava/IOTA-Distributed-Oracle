@@ -1,3 +1,4 @@
+import { createRequestPool, historyHint } from "./lib/requestPool";
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
@@ -239,6 +240,8 @@ function readableTextForBackground(background: string | null | undefined, dark =
   return luminance > 0.45 ? dark : light;
 }
 
+const refreshPool = createRequestPool();
+
 export default function App() {
   const initialRouteTaskId = taskIdFromUrl(window.location);
   const initialRouteNetwork = networkFromSearch(window.location.search) ?? "mainnet";
@@ -292,19 +295,20 @@ export default function App() {
 
   async function refreshStatus(network = activeNetworkRef.current) {
     try {
-      const data = await fetchStatusForNetwork(network);
+      const data = await refreshPool(`status:${network}`, () => fetchStatusForNetwork(network));
+      if (network !== activeNetworkRef.current) return;
       setStatus(data);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (network === activeNetworkRef.current) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (network === activeNetworkRef.current) setLoading(false);
     }
   }
 
   async function refreshIotaPrice() {
     try {
-      const data = await fetchIotaMarketPrice();
+      const data = await refreshPool("price", fetchIotaMarketPrice);
       setIotaMarketPrice(data);
     } catch {
       // Keep previous value if market API is temporarily unavailable.
@@ -578,8 +582,8 @@ export default function App() {
             />
             <MetricCard label="Known nodes" value={status?.metrics.knownNodes ?? "-"} hint="From env or inferred" />
             <MetricCard label="Inactive known nodes" value={status?.metrics.inactiveKnownNodes ?? "-"} />
-            <MetricCard label="On-chain task objects" value={status?.metrics.onChainTaskObjects ?? "-"} hint="" />
-            <MetricCard label="Total oracle events" value={status?.metrics.totalOracleEvents ?? "-"} hint="" />
+            <MetricCard label="On-chain task objects" value={status?.metrics.onChainTaskObjects ?? "-"} hint={historyHint(status?.metrics.history?.onChainTaskObjects)} />
+            <MetricCard label="Total oracle events" value={status?.metrics.totalOracleEvents ?? "-"} hint={historyHint(status?.metrics.history?.totalOracleEvents)} />
           </section>
 
           <TaskRunner

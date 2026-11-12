@@ -1,4 +1,6 @@
-import { readClient, boundedFetch } from "../upstream.js";
+import { readClient, historicalFetch, historyClient } from "../upstream.js";
+import { createHistoryCounter, createStatusCache, type HistorySnapshot } from "../historyMetrics.js";
+import { setting } from "../serviceLimits.js";
 // Copyright (c) 2026 Stefano Della Valle
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
@@ -59,39 +61,9 @@ type GraphqlTaskObjectsResponse = {
   errors?: Array<{ message?: string }>;
 };
 
-type GraphqlEventsResponse = {
-  data?: {
-    events?: {
-      nodes?: Array<{ timestamp?: string | null }>;
-      pageInfo?: {
-        hasNextPage?: boolean;
-        endCursor?: string | null;
-      };
-    };
-  };
-  errors?: Array<{ message?: string }>;
-};
-
-type TaskObjectCountCacheEntry = {
-  value: number | null;
-  fetchedAtMs: number;
-};
-
-const TASK_OBJECT_COUNT_CACHE_TTL_MS = 30_000;
-const TRANSIENT_GRAPHQL_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const EXECUTION_MESSAGE_KINDS = new Set([2, 3, 4, 7]);
-const taskObjectCountCache = new Map<string, TaskObjectCountCacheEntry>();
-const totalOracleEventsCache = new Map<string, TaskObjectCountCacheEntry>();
-
-class GraphqlHttpError extends Error {
-  constructor(readonly status: number) {
-    super(`GraphQL request failed: HTTP ${status}`);
-  }
-}
-
-function isTransientGraphqlError(error: unknown): boolean {
-  return error instanceof GraphqlHttpError && TRANSIENT_GRAPHQL_STATUS_CODES.has(error.status);
-}
+const history = createHistoryCounter({ pages: setting("WEBVIEW_HISTORY_PAGES_PER_BATCH", 2, 10) });
+const statusCache = createStatusCache<OracleStatusResponse>();
 
 function normalizeAddress(value: string): string {
   const t = String(value ?? "").trim().toLowerCase();
@@ -477,7 +449,7 @@ async function fetchGraphqlPayload<T>(
   query: string,
   variables: Record<string, unknown>,
 ): Promise<T> {
-  const response = await boundedFetch(graphqlUrl, {
+  const response = await historicalFetch(graphqlUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -487,165 +459,61 @@ async function fetchGraphqlPayload<T>(
   });
 
   if (!response.ok) {
-    throw new GraphqlHttpError(response.status);
+    throw new Error(`HISTORY_HTTP_${response.status}`);
   }
 
   return (await response.json()) as T;
 }
 
-async function countOnChainTaskObjects(
-  graphqlUrl: string,
-  packageId: string,
-  warnings: string[],
-): Promise<number | null> {
-  if (!packageId) return null;
-  if (!graphqlUrl) {
+function unavailable(): HistorySnapshot { return { value: null, state: "unavailable", asOf: null }; }
+
+function countOnChainTaskObjects(runtime: ReturnType<typeof getRuntimeConfig>, warnings: string[]): HistorySnapshot {
+  const packageId = runtime.oracleTasksPackageId;
+  if (!packageId) return unavailable();
+  if (!runtime.graphqlUrl) {
     warnings.push("Missing IOTA_GRAPHQL_URL for active network. GraphQL-backed task object count is unavailable.");
-    return null;
+    return unavailable();
   }
-
   const structType = `${packageId}::oracle_tasks::Task`;
-  const cacheKey = `${graphqlUrl}|${structType}`;
-  const cached = taskObjectCountCache.get(cacheKey);
-  const now = Date.now();
-  if (cached && now - cached.fetchedAtMs < TASK_OBJECT_COUNT_CACHE_TTL_MS) {
-    return cached.value;
-  }
-
-  const query = `
-    query CountTaskObjects($type: String!, $after: String) {
-      objects(first: 50, after: $after, filter: { type: $type }) {
-        nodes {
-          address
+  return history.read(`${runtime.network}|${runtime.graphqlUrl}|${structType}`, "snapshot", async cursor => {
+    const payload = await fetchGraphqlPayload<GraphqlTaskObjectsResponse>(runtime.graphqlUrl, `
+      query CountTaskObjects($type: String!, $after: String) {
+        objects(first: 50, after: $after, filter: { type: $type }) {
+          nodes { address }
+          pageInfo { hasNextPage endCursor }
         }
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-      }
+      }`, { type: structType, after: cursor });
+    const connection = payload.data?.objects;
+    if (payload.errors?.length || !Array.isArray(connection?.nodes) || typeof connection?.pageInfo?.hasNextPage !== "boolean") {
+      throw new Error("INVALID_HISTORY_PAGE");
     }
-  `;
+    return { count: connection.nodes.length, hasNextPage: connection.pageInfo.hasNextPage, cursor: connection.pageInfo.endCursor ?? null };
+  });
+}
 
-  let total = 0;
-  let cursor: string | null = null;
-
-  try {
-    for (;;) {
-      const payload: GraphqlTaskObjectsResponse = await fetchGraphqlPayload<GraphqlTaskObjectsResponse>(graphqlUrl, query, {
-        type: structType,
-        after: cursor,
+function countTotalOracleEvents(runtime: ReturnType<typeof getRuntimeConfig>): HistorySnapshot {
+  if (!runtime.oracleTasksPackageId) return unavailable();
+  const client = historyClient(runtime.rpcUrl);
+  const streams = ["oracle_tasks", "oracle_messages"].map(module => history.read(
+    `${runtime.network}|${runtime.rpcUrl}|${runtime.oracleTasksPackageId}|${module}`, "append", async cursor => {
+      if (typeof cursor === "string") throw new Error("INVALID_EVENT_CURSOR");
+      const page = await client.queryEvents({ query: { MoveModule: { package: runtime.oracleTasksPackageId, module } },
+        cursor, limit: 50, order: "ascending" });
+      if (!Array.isArray(page.data) || typeof page.hasNextPage !== "boolean") throw new Error("INVALID_HISTORY_PAGE");
+      const ids = page.data.map(event => event.id);
+      const keys = ids.map(id => {
+        if (!id || typeof id.txDigest !== "string" || typeof id.eventSeq !== "string") throw new Error("INVALID_EVENT_CURSOR");
+        return JSON.stringify({ txDigest: id.txDigest, eventSeq: id.eventSeq });
       });
-      if (payload.errors?.length) {
-        const message = payload.errors.map((item: { message?: string }) => item.message || "Unknown GraphQL error").join("; ");
-        throw new Error(message);
-      }
-
-      const nodes = payload.data?.objects?.nodes ?? [];
-      const pageInfo: { hasNextPage?: boolean; endCursor?: string | null } | undefined = payload.data?.objects?.pageInfo;
-      total += nodes.length;
-
-      if (!pageInfo?.hasNextPage) break;
-      cursor = pageInfo.endCursor ?? null;
-      if (!cursor) break;
-    }
-  } catch (error) {
-    if (cached?.value != null && isTransientGraphqlError(error)) {
-      return cached.value;
-    }
-    if (isTransientGraphqlError(error)) {
-      taskObjectCountCache.set(cacheKey, { value: null, fetchedAtMs: now });
-      return null;
-    }
-    warnings.push(`Unable to count on-chain task objects: ${String(error)}`);
-    taskObjectCountCache.set(cacheKey, { value: null, fetchedAtMs: now });
-    return null;
-  }
-
-  taskObjectCountCache.set(cacheKey, { value: total, fetchedAtMs: now });
-  return total;
-}
-
-async function countModuleEventsViaGraphql(
-  graphqlUrl: string,
-  emittingModule: string,
-): Promise<number> {
-  const query = `
-    query CountModuleEvents($module: String!, $after: String) {
-      events(first: 50, after: $after, filter: { emittingModule: $module }) {
-        nodes {
-          timestamp
-        }
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-      }
-    }
-  `;
-
-  let total = 0;
-  let cursor: string | null = null;
-
-  for (;;) {
-    const payload: GraphqlEventsResponse = await fetchGraphqlPayload<GraphqlEventsResponse>(graphqlUrl, query, {
-      module: emittingModule,
-      after: cursor,
-    });
-    if (payload.errors?.length) {
-      const message = payload.errors.map((item: { message?: string }) => item.message || "Unknown GraphQL error").join("; ");
-      throw new Error(message);
-    }
-
-    const nodes = payload.data?.events?.nodes ?? [];
-    const pageInfo: { hasNextPage?: boolean; endCursor?: string | null } | undefined = payload.data?.events?.pageInfo;
-    total += nodes.length;
-
-    if (!pageInfo?.hasNextPage) break;
-    cursor = pageInfo.endCursor ?? null;
-    if (!cursor) break;
-  }
-
-  return total;
-}
-
-async function countTotalOracleEvents(
-  graphqlUrl: string,
-  packageId: string,
-  warnings: string[],
-): Promise<number | null> {
-  if (!packageId) return null;
-  if (!graphqlUrl) {
-    warnings.push("Missing IOTA_GRAPHQL_URL for active network. GraphQL-backed event count is unavailable.");
-    return null;
-  }
-
-  const cacheKey = `${graphqlUrl}|${packageId}|oracle-events`;
-  const cached = totalOracleEventsCache.get(cacheKey);
-  const now = Date.now();
-  if (cached && now - cached.fetchedAtMs < TASK_OBJECT_COUNT_CACHE_TTL_MS) {
-    return cached.value;
-  }
-
-  try {
-    const [taskModuleEvents, messageModuleEvents] = await Promise.all([
-      countModuleEventsViaGraphql(graphqlUrl, `${packageId}::oracle_tasks`),
-      countModuleEventsViaGraphql(graphqlUrl, `${packageId}::oracle_messages`),
-    ]);
-    const total = taskModuleEvents + messageModuleEvents;
-    totalOracleEventsCache.set(cacheKey, { value: total, fetchedAtMs: now });
-    return total;
-  } catch (error) {
-    if (cached?.value != null && isTransientGraphqlError(error)) {
-      return cached.value;
-    }
-    if (isTransientGraphqlError(error)) {
-      totalOracleEventsCache.set(cacheKey, { value: null, fetchedAtMs: now });
-      return null;
-    }
-    warnings.push(`Unable to count total oracle events: ${String(error)}`);
-    totalOracleEventsCache.set(cacheKey, { value: null, fetchedAtMs: now });
-    return null;
-  }
+      if (new Set(keys).size !== keys.length || (cursor && keys.includes(JSON.stringify(cursor)))) throw new Error("REPEATED_EVENT_CURSOR");
+      const last = ids.at(-1);
+      return { count: page.data.length, hasNextPage: page.hasNextPage, cursor: last ? { txDigest: last.txDigest, eventSeq: last.eventSeq } : cursor };
+    }));
+  const value = streams.every(item => item.value != null) ? streams.reduce((total, item) => total + item.value!, 0) : null;
+  const state = streams.some(item => item.state === "unavailable") ? "unavailable"
+    : value == null ? "counting" : streams.every(item => item.state === "current") ? "current" : "updating";
+  const dates = streams.map(item => item.asOf).filter((date): date is string => date != null).sort();
+  return { value, state, asOf: dates.length === streams.length ? dates[0] : null };
 }
 
 async function getStateObjectContent(client: IotaClient, stateId: string, warnings: string[]): Promise<unknown | null> {
@@ -935,7 +803,12 @@ async function enrichRegisteredNodesWithValidatorInfo(
   );
 }
 
-export async function getOracleStatus(network?: string): Promise<OracleStatusResponse> {
+export function getOracleStatus(network?: string): Promise<OracleStatusResponse> {
+  const runtime = getRuntimeConfig(network as OracleNetwork | undefined);
+  return statusCache(JSON.stringify(runtime), () => loadOracleStatus(runtime.network));
+}
+
+async function loadOracleStatus(network?: string): Promise<OracleStatusResponse> {
   const runtime = getRuntimeConfig(network as OracleNetwork | undefined);
   const client = readClient(runtime.rpcUrl);
   const warnings: string[] = [];
@@ -1019,8 +892,8 @@ export async function getOracleStatus(network?: string): Promise<OracleStatusRes
   const activeNodes = nodeActivity.filter((node) => node.active).length;
   const knownNodes = effectiveRegisteredNodes.length > 0 ? effectiveRegisteredNodes.length : null;
   const inactiveKnownNodes = knownNodes == null ? null : knownNodes - activeNodes;
-  const onChainTaskObjects = await countOnChainTaskObjects(runtime.graphqlUrl, runtime.oracleTasksPackageId, warnings);
-  const totalOracleEvents = await countTotalOracleEvents(runtime.graphqlUrl, runtime.oracleTasksPackageId, warnings);
+  const objectHistory = countOnChainTaskObjects(runtime, warnings);
+  const eventHistory = countTotalOracleEvents(runtime);
 
   return {
     ok: true,
@@ -1040,8 +913,9 @@ export async function getOracleStatus(network?: string): Promise<OracleStatusRes
       activeNodes,
       knownNodes,
       inactiveKnownNodes,
-      onChainTaskObjects,
-      totalOracleEvents,
+      onChainTaskObjects: objectHistory.value,
+      totalOracleEvents: eventHistory.value,
+      history: { onChainTaskObjects: objectHistory, totalOracleEvents: eventHistory },
       taskEvents: taskEvents.length,
       messageEvents: messageEvents.length,
       totalEvents: combined.length,

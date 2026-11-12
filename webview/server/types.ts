@@ -78,6 +78,10 @@ export type OracleStatusResponse = {
     inactiveKnownNodes: number | null;
     onChainTaskObjects: number | null;
     totalOracleEvents: number | null;
+    history?: {
+      onChainTaskObjects: { value: number | null; state: "counting" | "current" | "updating" | "unavailable"; asOf: string | null };
+      totalOracleEvents: { value: number | null; state: "counting" | "current" | "updating" | "unavailable"; asOf: string | null };
+    };
     taskEvents: number;
     messageEvents: number;
     totalEvents: number;
