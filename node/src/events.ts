@@ -6,15 +6,47 @@
 //
 // Notes:
 // - The node uses RPC polling (queryEvents) with a cursor.
-// - Cursors are kept in memory only (no persistence). This is intentional for dev.
+// - Cursors and replay watermarks are persisted in STORAGE_DIR.
 // - The current on-chain package publishes oracle_tasks and systemState. oracle_messages may not exist.
 
 import type { IotaClient } from "@iota/iota-sdk/client";
+import { journalPath, readJournal, writeJournal, receiptPath } from './daemonJournal';
+import { pinRpc, ROTATE_RPC } from './rpcConsistency';
 
-export const eventPollHealth = new Map<string, { lastSuccessMs: number | null; failing: boolean; startedMs: number }>();
+export const eventPollHealth = new Map<string, {
+  lastSuccessMs: number | null;
+  failing: boolean;
+  startedMs: number;
+  failureSinceMs?: number | null;
+  consecutiveFailures?: number;
+  recovering?: boolean;
+  historyGap?: boolean;
+}>();
+
+export const LISTENER_FAILURE_GRACE_MS = 0;
+
+export function eventListenerDiagnostics(pollMs: number, now = Date.now()) {
+  const staleAfterMs = Math.max(60_000, pollMs * 10);
+  return [...eventPollHealth.entries()].map(([type, h]) => {
+    const lastSuccessAgeMs = Math.max(0, now - (h.lastSuccessMs ?? h.startedMs));
+    const failureDurationMs = h.failing ? Math.max(0, now - (h.failureSinceMs ?? h.startedMs)) : 0;
+    const stalled = lastSuccessAgeMs >= staleAfterMs;
+    const degraded = !!h.historyGap || stalled || (h.failing && failureDurationMs >= LISTENER_FAILURE_GRACE_MS);
+    return {
+      listener: type.split('::').slice(-2).join('::'),
+      status: h.historyGap ? 'history_gap' : stalled ? 'stalled' : h.recovering ? 'recovering' : h.failing ? 'retrying' : h.lastSuccessMs == null ? 'starting' : 'ok',
+      degraded,
+      lastSuccessMs: h.lastSuccessMs,
+      lastSuccessAgeMs,
+      failureDurationMs,
+      consecutiveFailures: h.consecutiveFailures ?? 0,
+      historyGap: !!h.historyGap,
+    };
+  });
+}
 
 export function eventListenersDegraded(pollMs: number, now = Date.now()): boolean {
-  return [...eventPollHealth.values()].some(h => h.failing || now - (h.lastSuccessMs ?? h.startedMs) > Math.max(60_000, pollMs * 10));
+  return eventListenerDiagnostics(pollMs, now).some(h => h.degraded);
 }
 
 function sleep(ms: number) {
@@ -98,16 +130,23 @@ export async function pollEvents(opts: {
   pollMs: number;
   minTimestampMs?: number;
   signal?: AbortSignal;
+  checkpointPath?: string;
   onEvent: (ev: any) => Promise<void> | void;
 }) {
-  const { client, moveEventType, pollMs, minTimestampMs, onEvent } = opts;
-  let cursor: any = null;
+  const { moveEventType, pollMs, minTimestampMs, onEvent } = opts;
+  let client = pinRpc(opts.client);
+  const path = opts.checkpointPath ?? journalPath('events', moveEventType);
+  const saved = readJournal<any>(path);
+  const since = saved?.since ?? minTimestampMs ?? 0;
+  let cursor: any = saved?.cursor ?? null;
   const seen = new Set<string>();
   let consecutiveFailures = 0;
-  let watermark = minTimestampMs ?? 0;
-  const watermarkKeys = new Set<string>();
-  let rescanning = false;
-  eventPollHealth.set(moveEventType, { lastSuccessMs: null, failing: false, startedMs: Date.now() });
+  let watermark = saved?.watermark ?? since;
+  const watermarkKeys = new Set<string>(saved?.watermarkKeys ?? []);
+  let rescanning = saved?.rescanning ?? false;
+  let historyGap = saved?.historyGap ?? false;
+  const save = () => writeJournal(path, { cursor, since, watermark, watermarkKeys: [...watermarkKeys], rescanning, historyGap });
+  eventPollHealth.set(moveEventType, { lastSuccessMs: null, failing: false, startedMs: Date.now(), historyGap });
 
   while (!opts.signal?.aborted) {
     let page: any;
@@ -121,15 +160,32 @@ export async function pollEvents(opts: {
       consecutiveFailures = 0;
       const health = eventPollHealth.get(moveEventType)!;
       health.lastSuccessMs = Date.now();
-      health.failing = rescanning;
+      health.failing = rescanning || health.failing;
+      health.recovering = rescanning;
+      health.consecutiveFailures = 0;
     } catch (error) {
       consecutiveFailures += 1;
-      eventPollHealth.get(moveEventType)!.failing = true;
+      const health = eventPollHealth.get(moveEventType)!;
+      health.failing = true;
+      health.failureSinceMs ??= Date.now();
+      health.consecutiveFailures = consecutiveFailures;
+      if (/data_pruned|cursor.*pruned/i.test(formatErrorMessage(error))) {
+        historyGap = true;
+        health.historyGap = true;
+      }
       // Re-read retained history rather than jumping past potentially pending events.
       if (cursor && /could not find the referenced transaction|invalid cursor|cursor.*pruned/i.test(formatErrorMessage(error))) {
         cursor = null;
         rescanning = true;
+        health.recovering = true;
       }
+      if (isTransientRpcError(error) && consecutiveFailures >= 3 && (opts.client as any)[ROTATE_RPC]) {
+        client = (opts.client as any)[ROTATE_RPC]();
+        cursor = null;
+        rescanning = true;
+        health.recovering = true;
+      }
+      save();
       const waitMs = Math.min(15_000, pollMs * Math.max(2, consecutiveFailures));
       const suffix = isTransientRpcError(error) ? " transient RPC error" : " polling error";
       console.warn(
@@ -139,13 +195,14 @@ export async function pollEvents(opts: {
       continue;
     }
 
+    let handlerFailed = false;
     for (const ev of page.data ?? []) {
       const evTs = Number((ev as any)?.timestampMs ?? 0);
-      if (minTimestampMs && evTs > 0 && evTs < minTimestampMs) continue;
+      if (since && evTs > 0 && evTs < since) continue;
 
       const key = eventKey(ev);
-      if (rescanning && evTs > 0 && (evTs < watermark || (evTs === watermark && watermarkKeys.has(key)))) continue;
       if (seen.has(key)) continue;
+      if (readJournal<{ done: boolean }>(receiptPath(path, key))?.done) continue;
       seen.add(key);
       if (seen.size > 2000) {
         const first = seen.values().next().value;
@@ -153,23 +210,37 @@ export async function pollEvents(opts: {
       }
       try {
         await onEvent(ev);
+        writeJournal(receiptPath(path, key), { done: true });
         if (evTs > watermark) { watermark = evTs; watermarkKeys.clear(); }
         if (evTs === watermark) watermarkKeys.add(key);
+        cursor = ev.id;
+        save();
       } catch (error) {
+        seen.delete(key);
+        handlerFailed = true;
+        const health = eventPollHealth.get(moveEventType)!;
+        health.failing = true;
+        health.failureSinceMs ??= Date.now();
         console.warn(
           `[events] handler failed for ${moveEventType} event ${key}: ${formatErrorMessage(error)}`,
         );
+        break;
       }
     }
+    if (handlerFailed) { await sleep(pollMs); continue; }
 
     if (page.hasNextPage) {
       cursor = page.nextCursor;
+      save();
       continue;
     }
 
     rescanning = false;
     eventPollHealth.get(moveEventType)!.failing = false;
+    eventPollHealth.get(moveEventType)!.failureSinceMs = null;
+    eventPollHealth.get(moveEventType)!.recovering = false;
     cursor = page.nextCursor ?? cursor;
+    save();
     await sleep(pollMs);
   }
 }

@@ -1,8 +1,19 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { after } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Transaction } from '@iota/iota-sdk/transactions';
-import { pollEvents, eventPollHealth, eventListenersDegraded } from '../src/events';
+import { pollEvents, eventPollHealth, eventListenersDegraded, eventListenerDiagnostics } from '../src/events';
 import { signAndExecuteWithLockRetry } from '../src/txRetry';
+
+const storage = mkdtempSync(join(tmpdir(), 'oracle-recovery-'));
+const previousStorage = process.env.STORAGE_DIR;
+process.env.STORAGE_DIR = storage;
+after(() => {
+  if (previousStorage == null) delete process.env.STORAGE_DIR; else process.env.STORAGE_DIR = previousStorage;
+  rmSync(storage, { recursive: true, force: true });
+});
 
 test('lost cursor rescans retained events without repeating delivered events', async () => {
   const stop = new AbortController();
@@ -28,8 +39,29 @@ test('listener health detects failures and stalled RPC calls, including before f
   eventPollHealth.set('x', { startedMs: 1, lastSuccessMs: 60_001, failing: false });
   assert.equal(eventListenersDegraded(1200, 60_002), false);
   eventPollHealth.get('x')!.failing = true;
+  eventPollHealth.get('x')!.failureSinceMs = 45_002;
   assert.equal(eventListenersDegraded(1200, 60_002), true);
   eventPollHealth.clear();
+});
+
+test('failures are exposed immediately and recovery rescans cannot hide a persistent failure', () => {
+  eventPollHealth.set('0xpackage::oracle_tasks::TaskRunSubmitted', {
+    startedMs: 100, lastSuccessMs: 1000, failing: true, failureSinceMs: 1000, consecutiveFailures: 1,
+  });
+  try {
+    assert.equal(eventListenersDegraded(1200, 1000), true);
+    assert.equal(eventListenersDegraded(1200, 16_000), true);
+    const h = eventPollHealth.values().next().value!;
+    h.lastSuccessMs = 16_000;
+    h.recovering = true;
+    assert.equal(eventListenersDegraded(1200, 16_001), true);
+    assert.deepEqual(eventListenerDiagnostics(1200, 16_001)[0], {
+      listener: 'oracle_tasks::TaskRunSubmitted', status: 'recovering', degraded: true,
+      lastSuccessMs: 16_000, lastSuccessAgeMs: 1, failureDurationMs: 15_001, consecutiveFailures: 1, historyGap: false,
+    });
+    h.failing = false; h.recovering = false; h.failureSinceMs = null;
+    assert.equal(eventListenersDegraded(1200, 16_002), false);
+  } finally { eventPollHealth.clear(); }
 });
 
 test('wallet transactions serialize and refresh gas from direct object reads', async () => {
@@ -37,17 +69,17 @@ test('wallet transactions serialize and refresh gas from direct object reads', a
   const observed: string[] = [];
   const client = {
     getCoins: async () => ({ data: [{ coinObjectId: '0x1', balance: '100', version: '1' }] }),
-    getObject: async () => ({ data: { objectId: '0x1', version: String(version), digest: 'fresh' } }),
-    signAndExecuteTransaction: async ({ transaction }: any) => {
+    getObject: async () => ({ data: { objectId: '0x1', version: String(version), digest: '11111111111111111111111111111111', content: { fields: { balance: '100' } } } }),
+    executeTransactionBlock: async ({ transactionBlock }: any) => {
       active++; peak = Math.max(peak, active);
-      observed.push(transaction.getData().gasData.payment[0].version);
+      observed.push(Transaction.from(transactionBlock).getData().gasData.payment![0].version);
       await new Promise(r => setTimeout(r, 5));
-      version++; active--; return { digest: 'done' };
+      version++; active--; return { digest: 'done', checkpoint: '1', effects: { status: { status: 'success' } } };
     },
   } as any;
-  const signer = { getPublicKey: () => ({ toIotaAddress: () => 'wallet' }) };
+  const signer = { getPublicKey: () => ({ toIotaAddress: () => '0x1' }), signTransaction: async (bytes: Uint8Array) => ({ bytes, signature: 'test' }) };
   const run = () => signAndExecuteWithLockRetry({ client, signer, maxAttempts: 1,
-    transactionFactory: () => { const tx = new Transaction(); tx.setGasBudget(50); return tx; } });
+    transactionFactory: () => { const tx = new Transaction(); tx.setGasBudget(50); tx.setGasPrice(1); return tx; } });
   await Promise.all([run(), run()]);
   assert.equal(peak, 1);
   assert.deepEqual(observed, ['10', '11']);

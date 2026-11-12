@@ -4,6 +4,7 @@
 import 'dotenv/config';
 import { IotaClient } from '@iota/iota-sdk/client';
 import { envByNetwork } from './config/env';
+import { coherentClient, PIN_RPC, ROTATE_RPC } from './rpcConsistency';
 
 const NON_RETRYABLE_METHODS = new Set<string>([
   'executeTransactionBlock',
@@ -44,23 +45,27 @@ function shouldFailover(error: unknown): boolean {
     message.includes('503') ||
     message.includes('502') ||
     message.includes('504')
+    || message.includes('rpc_state_behind_confirmed_transaction')
   );
 }
 
 function makeFailoverClient(urls: string[]): IotaClient {
+  const floors = new Map<string, bigint>();
   let currentIndex = 0;
-  let activeClient = new IotaClient({ url: urls[currentIndex] });
+  let activeClient = coherentClient(new IotaClient({ url: urls[currentIndex] }), floors);
 
   const switchEndpoint = () => {
     const from = urls[currentIndex];
     currentIndex = (currentIndex + 1) % urls.length;
     const to = urls[currentIndex];
-    activeClient = new IotaClient({ url: to });
+    activeClient = coherentClient(new IotaClient({ url: to }), floors);
     console.warn(`[iota] RPC failover: ${from} -> ${to}`);
   };
 
   return new Proxy({} as IotaClient, {
     get(_target, prop, _receiver) {
+      if (prop === PIN_RPC) return () => activeClient;
+      if (prop === ROTATE_RPC) return () => { if (urls.length > 1) switchEndpoint(); return activeClient; };
       const value = Reflect.get(activeClient as object, prop);
       if (typeof value !== 'function') return value;
 

@@ -5,7 +5,7 @@ import { createServer, type Server, type RequestListener } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 
 import type { NodeContext } from "./nodeContext";
-import { eventListenersDegraded } from "./events";
+import { eventListenerDiagnostics, LISTENER_FAILURE_GRACE_MS } from "./events";
 
 const DEFAULT_MONITOR_HOST = "127.0.0.1";
 const DEFAULT_MONITOR_PORT = 9080;
@@ -89,13 +89,16 @@ export function createMonitorHandler(ctx: NodeContext, state: MonitorRuntimeStat
         (check) => check.enabled && (check.status === "failed" ||
           (check.status === "running" && check.lastError != null)),
       );
-      const listenersDegraded = eventListenersDegraded(ctx.pollMs);
+      const listeners = eventListenerDiagnostics(ctx.pollMs);
+      const listenersDegraded = listeners.some(listener => listener.degraded);
       const status = state.booting ? "booting" : listenersDegraded ? "degraded" : "ok";
       const code = state.booting || listenersDegraded ? 503 : 200;
       if (url.pathname === "/health") {
         return send(code, {
           status,
           listenersDegraded,
+          listeners,
+          listenerFailureGraceMs: LISTENER_FAILURE_GRACE_MS,
           capabilitiesDegraded,
           capabilityHealth: {
             checks: {
@@ -128,6 +131,8 @@ export function createMonitorHandler(ctx: NodeContext, state: MonitorRuntimeStat
         status,
         nodeId: ctx.nodeId,
         listenersDegraded,
+        listeners,
+        listenerFailureGraceMs: LISTENER_FAILURE_GRACE_MS,
         address: ctx.identity.address,
         capabilitiesDegraded,
         capabilityHealth,

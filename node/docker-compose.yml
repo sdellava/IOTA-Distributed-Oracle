@@ -23,3 +23,7 @@ services:
     command: ["node", "--import", "tsx", "src/index.ts", "--node", "1"]
     volumes:
       - ./keys:/app/keys
+      - oracle_node_state:/app/storage
+
+volumes:
+  oracle_node_state:

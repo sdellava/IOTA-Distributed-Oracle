@@ -4,6 +4,9 @@
 import type { IotaClient } from '@iota/iota-sdk/client';
 import type { Transaction } from '@iota/iota-sdk/transactions';
 import { attachFreshGasPayment } from './gas.js';
+import { pinRpc, RECORD_EFFECTS, ROTATE_RPC } from './rpcConsistency';
+import { journalPath, readJournal, writeJournal } from './daemonJournal';
+import { createHash } from 'node:crypto';
 
 function envInt(name: string, def: number): number {
   const raw = process.env[name]?.trim();
@@ -57,7 +60,29 @@ async function executeWithLockRetry(opts: {
   label?: string;
   maxAttempts?: number;
 }): Promise<any> {
-  const { client, signer, transactionFactory, transaction, options, label } = opts;
+  const { signer, transactionFactory, transaction, options, label } = opts;
+  const client = pinRpc(opts.client);
+  const path = journalPath('transaction', signer.getPublicKey().toIotaAddress());
+  // An unknown previous submission blocks all new wallet writes until its effects are known.
+  const intentData = transactionFactory ? transactionFactory().getData() : transaction?.getData();
+  const intent = createHash('sha256').update(JSON.stringify(intentData)).digest('hex');
+  const pending = readJournal<{ digest?: string; label?: string; intent?: string; effects?: any }>(path);
+  if (pending?.effects) (client as any)[RECORD_EFFECTS]?.(pending.effects);
+  if (pending?.digest) {
+    let resolved: any;
+    try { resolved = await client.getTransactionBlock({ digest: pending.digest, options: { ...options, showEffects: true } }); }
+    catch { throw new Error(`TRANSACTION_OUTCOME_UNKNOWN digest=${pending.digest}`); }
+    if (!resolved.effects?.status) throw new Error(`TRANSACTION_OUTCOME_UNKNOWN digest=${pending.digest}`);
+    (client as any)[RECORD_EFFECTS]?.(resolved.effects);
+    if (resolved.effects.status.status === 'success' && !resolved.checkpoint) {
+      resolved = await client.waitForTransaction({ digest: pending.digest, options: { ...options, showEffects: true }, timeout: 15_000, pollInterval: 500 });
+    }
+    writeJournal(path, { effects: resolved.effects });
+    // Return a recovered result only to the same workflow. A different caller must retry its own work.
+    if (resolved.effects.status.status !== 'success') throw new Error('PREVIOUS_TRANSACTION_FAILED_ON_CHAIN');
+    if (pending.label === label && pending.intent === intent) return resolved;
+    throw new Error('PREVIOUS_TRANSACTION_RESOLVED_RETRY_CURRENT_OPERATION');
+  }
   const maxAttempts =
     opts.maxAttempts == null ? envInt('TX_LOCK_RETRY_MAX_ATTEMPTS', 0) : Math.max(1, Math.floor(opts.maxAttempts));
 
@@ -69,13 +94,31 @@ async function executeWithLockRetry(opts: {
       if (transactionFactory) {
         await attachFreshGasPayment({ client, tx, owner: signer.getPublicKey().toIotaAddress() });
       }
-      return (await client.signAndExecuteTransaction({
-        signer,
-        transaction: tx,
-        options,
-      } as any)) as any;
+      tx.setSenderIfNotSet(signer.getPublicKey().toIotaAddress());
+      const bytes = await tx.build({ client });
+      const digest = await tx.getDigest({ client });
+      const signed = await signer.signTransaction(bytes);
+      writeJournal(path, { digest, label, intent, effects: pending?.effects });
+      let result = await client.executeTransactionBlock({
+        transactionBlock: signed.bytes,
+        signature: signed.signature,
+        options: { ...options, showEffects: true },
+      } as any);
+      if (!result.effects?.status) throw new Error(`TRANSACTION_OUTCOME_UNKNOWN digest=${digest}`);
+      (client as any)[RECORD_EFFECTS]?.(result.effects);
+      if (result.effects.status.status !== 'success') {
+        writeJournal(path, { effects: result.effects });
+        throw new Error(`TRANSACTION_FAILED_ON_CHAIN: ${result.effects.status.error ?? 'unknown'}`);
+      }
+      if (!result.checkpoint) result = await client.waitForTransaction({ digest, options: { ...options, showEffects: true }, timeout: 15_000, pollInterval: 500 });
+      writeJournal(path, { effects: result.effects });
+      return result;
     } catch (error) {
-      if (!isLockConflictError(error)) throw error;
+      // Only explicit pre-execution version/lock rejection permits rebuilding.
+      if (String((error as any)?.message ?? error).startsWith('TRANSACTION_FAILED_ON_CHAIN')) throw error;
+      const rejected = /is not available for consumption, current version|reserved for another transaction/i.test(String((error as any)?.message ?? error));
+      if (!rejected) throw error;
+      writeJournal(path, { effects: pending?.effects });
       if (maxAttempts > 0 && attempt >= maxAttempts) throw error;
 
       const waitMs = randomDelayMs();
@@ -94,5 +137,11 @@ export async function signAndExecuteWithLockRetry(opts: Parameters<typeof execut
   const pending = previous.catch(() => {}).then(() => executeWithLockRetry(opts));
   walletQueues.set(owner, pending);
   try { return await pending; }
+  catch (error) {
+    if (/RPC_STATE_BEHIND|TRANSACTION_OUTCOME_UNKNOWN|timeout|fetch failed|502|503|504/i.test(String((error as any)?.message ?? error))) {
+      (opts.client as any)[ROTATE_RPC]?.();
+    }
+    throw error;
+  }
   finally { if (walletQueues.get(owner) === pending) walletQueues.delete(owner); }
 }

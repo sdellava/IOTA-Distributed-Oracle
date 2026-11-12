@@ -39,7 +39,7 @@ export async function attachFreshGasPayment(opts: {
   // Pick the largest coin (simple + robust for faucet-funded dev).
   const coins = await client.getCoins({ owner, limit: 50 } as any);
   const list: any[] = Array.isArray((coins as any)?.data) ? (coins as any).data : [];
-  if (!list.length) return;
+  if (!list.length) throw new Error('NO_GAS_COINS_AVAILABLE');
 
   list.sort((a, b) => {
     const ba = asBigInt(a?.balance);
@@ -47,16 +47,22 @@ export async function attachFreshGasPayment(opts: {
     return bb > ba ? 1 : bb < ba ? -1 : 0;
   });
 
-  // Preserve the SDK's multi-coin selection when one coin cannot cover the budget.
   const budget = asBigInt(opts.tx.getData().gasData.budget);
-  if (asBigInt(list[0]?.balance) < budget) return;
-
-  const coinId = String(list[0]?.coinObjectId ?? list[0]?.objectId ?? "").trim();
-  if (!coinId) return;
-
-  const obj = await client.getObject({ id: coinId, options: { showContent: false } } as any);
-  const ref = getObjRef(obj);
-  if (!ref) return;
-
-  (tx as any).setGasPayment([ref]);
+  const usedInputs = new Set(tx.getData().inputs.map((input: any) =>
+    input.Object?.ImmOrOwnedObject?.objectId ?? input.UnresolvedObject?.objectId));
+  const refs: NonNullable<ReturnType<typeof getObjRef>>[] = [];
+  let balance = 0n;
+  for (const coin of list) {
+    const coinId = String(coin.coinObjectId ?? coin.objectId ?? '').trim();
+    if (!coinId || usedInputs.has(coinId)) continue;
+    const obj = await client.getObject({ id: coinId, options: { showContent: true } });
+    const ref = getObjRef(obj);
+    const content: any = obj.data?.content;
+    if (!ref || content?.fields?.balance == null) throw new Error('GAS_COIN_STATE_UNAVAILABLE');
+    refs.push(ref);
+    balance += asBigInt(content.fields.balance);
+    if (balance >= budget) break;
+  }
+  if (balance < budget) throw new Error('INSUFFICIENT_FRESH_GAS_BALANCE');
+  tx.setGasPayment(refs);
 }

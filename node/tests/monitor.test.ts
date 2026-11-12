@@ -7,12 +7,20 @@ const secret = "sensitive provider error with credentials";
 const token = "a".repeat(64);
 test("public health reports failed and recovered listeners without exposing RPC errors", async () => {
   const f = fixture();
-  eventPollHealth.set('listener', { lastSuccessMs: Date.now(), failing: true, startedMs: Date.now() });
+  eventPollHealth.set('listener', { lastSuccessMs: Date.now(), failing: true, startedMs: Date.now(), failureSinceMs: Date.now() - 15_001 });
   try {
     const failed = await f.request('/health');
     assert.equal(failed.code, 503);
     assert.equal(failed.body.status, 'degraded');
     assert.equal(failed.body.listenersDegraded, true);
+    assert.equal(failed.body.listeners[0].listener, 'listener');
+    assert.equal(failed.body.listeners[0].status, 'retrying');
+    assert.ok(failed.body.listeners[0].failureDurationMs >= 15_000);
+    eventPollHealth.get('listener')!.failureSinceMs = Date.now();
+    const transient = await f.request('/health');
+    assert.equal(transient.code, 503);
+    assert.equal(transient.body.listeners[0].status, 'retrying');
+    assert.equal(transient.body.listenersDegraded, true);
     eventPollHealth.get('listener')!.failing = false;
     assert.equal((await f.request('/health')).code, 200);
   } finally { eventPollHealth.clear(); }
@@ -57,7 +65,7 @@ test("public health only contains synthetic status and performs no chain RPC", a
   const f = fixture();
   const r = await f.request("/health");
   assert.equal(r.code, 200);
-  assert.deepEqual(r.body, { status: "ok", listenersDegraded: false, capabilitiesDegraded: true, capabilityHealth: { checks: { LLM: { status: "failed" }, IPFS: { status: "failed" } } } });
+  assert.deepEqual(r.body, { status: "ok", listenersDegraded: false, listeners: [], listenerFailureGraceMs: 0, capabilitiesDegraded: true, capabilityHealth: { checks: { LLM: { status: "failed" }, IPFS: { status: "failed" } } } });
   assert.equal(f.balanceCalls(), 0);
   assert.equal(r.headers["cache-control"], "no-store");
   f.state.booting = true;
