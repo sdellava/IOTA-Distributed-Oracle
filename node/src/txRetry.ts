@@ -3,6 +3,7 @@
 
 import type { IotaClient } from '@iota/iota-sdk/client';
 import type { Transaction } from '@iota/iota-sdk/transactions';
+import { attachFreshGasPayment } from './gas.js';
 
 function envInt(name: string, def: number): number {
   const raw = process.env[name]?.trim();
@@ -47,7 +48,7 @@ export function isLockConflictError(error: unknown): boolean {
   ].some((needle) => msg.includes(needle));
 }
 
-export async function signAndExecuteWithLockRetry(opts: {
+async function executeWithLockRetry(opts: {
   client: IotaClient;
   signer: any;
   transactionFactory?: () => Transaction;
@@ -64,9 +65,13 @@ export async function signAndExecuteWithLockRetry(opts: {
   for (;;) {
     attempt += 1;
     try {
+      const tx = transactionFactory ? transactionFactory() : transaction;
+      if (transactionFactory) {
+        await attachFreshGasPayment({ client, tx, owner: signer.getPublicKey().toIotaAddress() });
+      }
       return (await client.signAndExecuteTransaction({
         signer,
-        transaction: transactionFactory ? transactionFactory() : transaction,
+        transaction: tx,
         options,
       } as any)) as any;
     } catch (error) {
@@ -79,4 +84,15 @@ export async function signAndExecuteWithLockRetry(opts: {
       await sleep(waitMs);
     }
   }
+}
+
+// All callers in this process sharing a gas owner must finish before the next build.
+const walletQueues = new Map<string, Promise<unknown>>();
+export async function signAndExecuteWithLockRetry(opts: Parameters<typeof executeWithLockRetry>[0]): Promise<any> {
+  const owner = opts.signer.getPublicKey().toIotaAddress();
+  const previous = walletQueues.get(owner) ?? Promise.resolve();
+  const pending = previous.catch(() => {}).then(() => executeWithLockRetry(opts));
+  walletQueues.set(owner, pending);
+  try { return await pending; }
+  finally { if (walletQueues.get(owner) === pending) walletQueues.delete(owner); }
 }

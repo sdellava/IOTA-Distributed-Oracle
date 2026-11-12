@@ -47,6 +47,10 @@ export async function attachFreshGasPayment(opts: {
     return bb > ba ? 1 : bb < ba ? -1 : 0;
   });
 
+  // Preserve the SDK's multi-coin selection when one coin cannot cover the budget.
+  const budget = asBigInt(opts.tx.getData().gasData.budget);
+  if (asBigInt(list[0]?.balance) < budget) return;
+
   const coinId = String(list[0]?.coinObjectId ?? list[0]?.objectId ?? "").trim();
   if (!coinId) return;
 

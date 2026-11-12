@@ -11,6 +11,12 @@
 
 import type { IotaClient } from "@iota/iota-sdk/client";
 
+export const eventPollHealth = new Map<string, { lastSuccessMs: number | null; failing: boolean; startedMs: number }>();
+
+export function eventListenersDegraded(pollMs: number, now = Date.now()): boolean {
+  return [...eventPollHealth.values()].some(h => h.failing || now - (h.lastSuccessMs ?? h.startedMs) > Math.max(60_000, pollMs * 10));
+}
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -86,19 +92,24 @@ function eventKey(ev: any): string {
   return JSON.stringify(id ?? ev ?? null);
 }
 
-async function pollEvents(opts: {
+export async function pollEvents(opts: {
   client: IotaClient;
   moveEventType: string;
   pollMs: number;
   minTimestampMs?: number;
+  signal?: AbortSignal;
   onEvent: (ev: any) => Promise<void> | void;
 }) {
   const { client, moveEventType, pollMs, minTimestampMs, onEvent } = opts;
   let cursor: any = null;
   const seen = new Set<string>();
   let consecutiveFailures = 0;
+  let watermark = minTimestampMs ?? 0;
+  const watermarkKeys = new Set<string>();
+  let rescanning = false;
+  eventPollHealth.set(moveEventType, { lastSuccessMs: null, failing: false, startedMs: Date.now() });
 
-  for (;;) {
+  while (!opts.signal?.aborted) {
     let page: any;
     try {
       page = await client.queryEvents({
@@ -108,8 +119,17 @@ async function pollEvents(opts: {
         order: "ascending",
       } as any);
       consecutiveFailures = 0;
+      const health = eventPollHealth.get(moveEventType)!;
+      health.lastSuccessMs = Date.now();
+      health.failing = rescanning;
     } catch (error) {
       consecutiveFailures += 1;
+      eventPollHealth.get(moveEventType)!.failing = true;
+      // Re-read retained history rather than jumping past potentially pending events.
+      if (cursor && /could not find the referenced transaction|invalid cursor|cursor.*pruned/i.test(formatErrorMessage(error))) {
+        cursor = null;
+        rescanning = true;
+      }
       const waitMs = Math.min(15_000, pollMs * Math.max(2, consecutiveFailures));
       const suffix = isTransientRpcError(error) ? " transient RPC error" : " polling error";
       console.warn(
@@ -124,6 +144,7 @@ async function pollEvents(opts: {
       if (minTimestampMs && evTs > 0 && evTs < minTimestampMs) continue;
 
       const key = eventKey(ev);
+      if (rescanning && evTs > 0 && (evTs < watermark || (evTs === watermark && watermarkKeys.has(key)))) continue;
       if (seen.has(key)) continue;
       seen.add(key);
       if (seen.size > 2000) {
@@ -132,6 +153,8 @@ async function pollEvents(opts: {
       }
       try {
         await onEvent(ev);
+        if (evTs > watermark) { watermark = evTs; watermarkKeys.clear(); }
+        if (evTs === watermark) watermarkKeys.add(key);
       } catch (error) {
         console.warn(
           `[events] handler failed for ${moveEventType} event ${key}: ${formatErrorMessage(error)}`,
@@ -144,6 +167,8 @@ async function pollEvents(opts: {
       continue;
     }
 
+    rescanning = false;
+    eventPollHealth.get(moveEventType)!.failing = false;
     cursor = page.nextCursor ?? cursor;
     await sleep(pollMs);
   }

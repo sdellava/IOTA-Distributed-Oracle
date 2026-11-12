@@ -1,9 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMonitorHandler, type MonitorRuntimeState } from "../src/monitor";
+import { eventPollHealth } from "../src/events";
 
 const secret = "sensitive provider error with credentials";
 const token = "a".repeat(64);
+test("public health reports failed and recovered listeners without exposing RPC errors", async () => {
+  const f = fixture();
+  eventPollHealth.set('listener', { lastSuccessMs: Date.now(), failing: true, startedMs: Date.now() });
+  try {
+    const failed = await f.request('/health');
+    assert.equal(failed.code, 503);
+    assert.equal(failed.body.status, 'degraded');
+    assert.equal(failed.body.listenersDegraded, true);
+    eventPollHealth.get('listener')!.failing = false;
+    assert.equal((await f.request('/health')).code, 200);
+  } finally { eventPollHealth.clear(); }
+});
 function fixture(authToken: string | undefined = token) {
   let balanceCalls = 0;
   const check = {
@@ -44,7 +57,7 @@ test("public health only contains synthetic status and performs no chain RPC", a
   const f = fixture();
   const r = await f.request("/health");
   assert.equal(r.code, 200);
-  assert.deepEqual(r.body, { status: "ok", capabilitiesDegraded: true, capabilityHealth: { checks: { LLM: { status: "failed" }, IPFS: { status: "failed" } } } });
+  assert.deepEqual(r.body, { status: "ok", listenersDegraded: false, capabilitiesDegraded: true, capabilityHealth: { checks: { LLM: { status: "failed" }, IPFS: { status: "failed" } } } });
   assert.equal(f.balanceCalls(), 0);
   assert.equal(r.headers["cache-control"], "no-store");
   f.state.booting = true;
